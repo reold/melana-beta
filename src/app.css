@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+/*
+ * Apple / Figma palette
+ * Tailwind CSS v4 uses CSS-first configuration: each --color-* token creates
+ * utilities such as bg-apple-blue, text-apple-gray-2, and border-apple-red.
+ */
+@theme {
+  --color-apple-blue: #007aff;
+  --color-apple-brown: #a2845e;
+  --color-apple-cyan: #32ade6;
+  --color-apple-green: #34c759;
+  --color-apple-indigo: #5856d6;
+  --color-apple-teal: #00c7be;
+  --color-apple-orange: #ff9500;
+  --color-apple-pink: #ff2d55;
+  --color-apple-purple: #af52de;
+  --color-apple-red: #ff3b30;
+  --color-apple-aqua: #30b0c7;
+  --color-apple-yellow: #ffcc00;
+
+  --color-apple-gray: #8e8e93;
+  --color-apple-gray-2: #aeaeb2;
+  --color-apple-gray-3: #c7c7cc;
+  --color-apple-gray-4: #d1d1d6;
+  --color-apple-gray-5: #e5e5ea;
+  --color-apple-gray-6: #f2f2f7;
+
+  --color-apple-black: #000000;
+  --color-apple-dark-gray: #8a8a8e;
+  --color-apple-light-gray: #c4c4c6;
+  --color-apple-light-gray-2: #dcdcdd;
+  --color-apple-light-gray-3: #e4e4e6;
+  --color-apple-light-gray-4: #e9e9ea;
+  --color-apple-light-gray-5: #eeeeef;
+  --color-apple-light-gray-6: #f4f4f5;
+  --color-apple-white: #ffffff;
+
+  /* Semantic aliases used by the dark browse experience. */
+  --color-app-canvas: #000000;
+  --color-app-surface: #1c1c1e;
+  --color-app-surface-hover: #2c2c2e;
+  --color-app-label: #ffffff;
+  --color-app-secondary-label: #aeaeb2;
+  --color-app-separator: rgb(255 255 255 / 0.12);
+}
