@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import ContourTexture from "$lib/assets/contour-texture.png";
   import Dropdown from "$lib/common/Dropdown.svelte";
   import TagsSelect from "$lib/common/TagSelect.svelte";
@@ -30,6 +30,8 @@
   let includeTypes = $state<string[]>(["TV Shows", "Movies"]);
   let searchQuery = $state("");
   let searchInput = $state<HTMLInputElement | null>(null);
+  let searchFocused = $state(false);
+  let keyboardInset = $state(0);
 
   const isSearchMode = $derived(searchQuery.trim().length > 0);
   const selectedMediaTypes = $derived(
@@ -51,6 +53,44 @@
   });
 
   onDestroy(() => catalog.destroy());
+
+  function updateKeyboardInset() {
+    const viewport = window.visualViewport;
+    if (!viewport || !searchFocused) {
+      keyboardInset = 0;
+      return;
+    }
+
+    // VisualViewport is the reliable keyboard signal on iOS Safari. The
+    // Virtual Keyboard API / keyboard-inset CSS environment variables are not.
+    keyboardInset = Math.max(
+      0,
+      window.innerHeight - viewport.height - viewport.offsetTop,
+    );
+  }
+
+  onMount(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+
+    viewport.addEventListener("resize", updateKeyboardInset);
+    viewport.addEventListener("scroll", updateKeyboardInset);
+
+    return () => {
+      viewport.removeEventListener("resize", updateKeyboardInset);
+      viewport.removeEventListener("scroll", updateKeyboardInset);
+    };
+  });
+
+  function handleSearchFocus() {
+    searchFocused = true;
+    requestAnimationFrame(updateKeyboardInset);
+  }
+
+  function handleSearchBlur() {
+    searchFocused = false;
+    keyboardInset = 0;
+  }
 
   function clearSearch() {
     searchQuery = "";
@@ -119,17 +159,24 @@
     {onSelect}
   />
 
-  <div class="fixed inset-x-0 bottom-6 z-40 flex items-center gap-2 px-5">
+  <div
+    class="fixed inset-x-0 z-40 flex items-center gap-2 px-5 transition-transform duration-150"
+    style={`bottom: calc(1.5rem + env(safe-area-inset-bottom)); transform: translateY(-${keyboardInset}px);`}
+  >
     <div
-      class="flex flex-1 items-center rounded-2xl border border-app-separator bg-linear-to-r from-apple-white/30 via-apple-white/10 to-apple-white/5 px-4 py-3 shadow-lg backdrop-blur-xl"
+      class="flex flex-1 items-center rounded-2xl border border-apple-gray/35 bg-gradient-to-r from-app-surface/95 via-app-surface/90 to-app-surface/80 px-4 py-3 shadow-lg backdrop-blur-xl"
     >
       <input
         bind:this={searchInput}
         bind:value={searchQuery}
         type="text"
+        inputmode="search"
+        enterkeyhint="search"
         placeholder="Search titles..."
         aria-label="Search titles"
-        class="w-full bg-transparent text-[15px] font-semibold text-app-label placeholder-apple-dark-gray outline-none"
+        onfocus={handleSearchFocus}
+        onblur={handleSearchBlur}
+        class="w-full bg-transparent text-[16px] font-semibold text-app-label placeholder-apple-gray-3 outline-none"
       />
     </div>
 
@@ -137,7 +184,7 @@
       type="button"
       onclick={clearSearch}
       aria-label="Clear search"
-      class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-app-separator bg-apple-white/15 text-app-label shadow-lg backdrop-blur-xl transition-transform active:scale-95"
+      class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-apple-gray/35 bg-app-surface/90 text-app-label shadow-lg backdrop-blur-xl transition-transform active:scale-95"
     >
       <svg
         class="h-5 w-5"
