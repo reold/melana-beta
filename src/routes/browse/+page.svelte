@@ -121,7 +121,7 @@
 
   <div class="fixed inset-x-0 bottom-6 z-40 flex items-center gap-2 px-5">
     <div
-      class="flex flex-1 items-center rounded-2xl border border-app-separator bg-gradient-to-r from-apple-white/30 via-apple-white/10 to-apple-white/5 px-4 py-3 shadow-lg backdrop-blur-xl"
+      class="flex flex-1 items-center rounded-2xl border border-app-separator bg-linear-to-r from-apple-white/30 via-apple-white/10 to-apple-white/5 px-4 py-3 shadow-lg backdrop-blur-xl"
     >
       <input
         bind:this={searchInput}
@@ -129,7 +129,7 @@
         type="text"
         placeholder="Search titles..."
         aria-label="Search titles"
-        class="w-full bg-transparent text-[15px] font-semibold text-app-label placeholder-apple-gray-3 outline-none"
+        class="w-full bg-transparent text-[15px] font-semibold text-app-label placeholder-apple-dark-gray outline-none"
       />
     </div>
 
