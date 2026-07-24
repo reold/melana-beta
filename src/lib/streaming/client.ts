@@ -2,6 +2,7 @@ import type { MediaType } from "$lib/tmdb/types";
 
 /** The public API that resolves a TMDB title into playable sources. */
 const DEFAULT_PROXY_ORIGIN = "https://melana-rs.onrender.com";
+const VIDLINK_ORIGIN = "https://vidlink.pro";
 const proxyOrigin = (
   import.meta.env.PUBLIC_STREAM_PROXY_ORIGIN || DEFAULT_PROXY_ORIGIN
 ).replace(/\/$/, "");
@@ -32,10 +33,12 @@ export class StreamError extends Error {
   }
 }
 
-function normaliseUrl(value: string): string {
-  // A URL should arrive as JSON, but accepting HTML-escaped ampersands makes
-  // the player resilient to proxies that serialise an already-escaped value.
-  return value.replaceAll("&amp;", "&");
+function proxiedStreamUrl(url: string): string {
+  const params = new URLSearchParams({
+    url,
+    origin: VIDLINK_ORIGIN,
+  });
+  return `${proxyOrigin}/proxy?${params}`;
 }
 
 function qualityRank(label: string): number {
@@ -75,7 +78,10 @@ export async function getStream(
       if (typeof source.url !== "string" || !source.url) return [];
       return [{
         label,
-        url: normaliseUrl(source.url),
+        // Stream URLs must be fetched through the proxy so Vidlink's origin is
+        // supplied with every request. URLSearchParams safely preserves any
+        // signed query string without needing to transform the source URL.
+        url: proxiedStreamUrl(source.url),
         type: typeof source.type === "string" ? source.type : "video/mp4",
         codecName: typeof source.codecName === "string" ? source.codecName : null,
       }];
