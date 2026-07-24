@@ -161,7 +161,7 @@ export async function searchMixedMedia(
 
 export function tmdbPosterUrl(
   path: string | null,
-  size: "w342" | "w500" = "w500",
+  size: "w185" | "w342" | "w500" | "w780" = "w500",
 ): string | null {
   return path ? `${IMAGE_BASE}/${size}${path}` : null;
 }
