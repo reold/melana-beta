@@ -1,5 +1,7 @@
 <script lang="ts">
   import Drawer from "@harshmandan/svaul";
+  import { goto } from "$app/navigation";
+  import { resolve } from "$app/paths";
   import { fetchMediaDetails, tmdbPosterUrl } from "$lib/tmdb/client";
   import type { MediaDetails, MediaSummary } from "$lib/tmdb/types";
 
@@ -63,6 +65,18 @@
   const rating = $derived(
     shown?.rating === null || !shown ? null : shown.rating.toFixed(1),
   );
+
+  function watchTitle() {
+    if (!shown) return;
+    const query = new URLSearchParams({
+      type: shown.mediaType,
+      id: String(shown.id),
+      title: shown.title,
+    });
+    if (shown.posterPath) query.set("poster", shown.posterPath);
+    void goto(`${resolve("/watch")}?${query}`);
+    onPlay(shown);
+  }
 </script>
 
 <Drawer
@@ -304,7 +318,7 @@
       <button
         type="button"
         class="flex h-12 w-full items-center justify-center gap-2 rounded-[10px] bg-apple-green text-base font-extrabold text-apple-black transition-transform active:scale-[0.98]"
-        onclick={() => shown && onPlay(shown)}
+        onclick={watchTitle}
       >
         <svg
           class="h-5 w-5"
