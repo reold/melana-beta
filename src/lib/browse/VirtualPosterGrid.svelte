@@ -137,7 +137,7 @@
     >
       {#each virtualRows as rowIndex (rowIndex)}
         <div
-          class="absolute left-5 right-5 grid grid-cols-2 gap-x-4"
+          class="absolute inset-x-0 grid grid-cols-2 gap-x-4"
           style={`top: ${rowIndex * rowHeight}px`}
         >
           {#each items.slice(rowIndex * columns, rowIndex * columns + columns) as item (`${item.mediaType}:${item.id}`)}
