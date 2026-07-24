@@ -13,7 +13,17 @@
   const rating = $derived(
     item.rating === null ? null : String(Math.round(item.rating)),
   );
-  const posterUrl = $derived(tmdbPosterUrl(item.posterPath));
+  const posterUrl = $derived(tmdbPosterUrl(item.posterPath, "w500"));
+  const posterSrcSet = $derived(
+    item.posterPath
+      ? [
+          `${tmdbPosterUrl(item.posterPath, "w185")} 185w`,
+          `${tmdbPosterUrl(item.posterPath, "w342")} 342w`,
+          `${tmdbPosterUrl(item.posterPath, "w500")} 500w`,
+          `${tmdbPosterUrl(item.posterPath, "w780")} 780w`,
+        ].join(", ")
+      : "",
+  );
 </script>
 
 <button
@@ -26,8 +36,10 @@
     {#if posterUrl}
       <img
         src={posterUrl}
+        srcset={posterSrcSet}
+        sizes="(max-width: 640px) calc((100vw - 56px) / 2), 220px"
         alt={item.title}
-        class="h-full w-full object-cover"
+        class="h-full w-full object-cover object-center"
         loading="lazy"
       />
     {:else}
