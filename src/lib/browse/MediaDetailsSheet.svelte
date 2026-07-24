@@ -119,7 +119,7 @@
 
   <div
     data-svaul-drawer-no-drag
-    class="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain pb-24"
+    class="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain"
   >
     {#if shown}
       <div class="px-5 pb-6">
@@ -296,10 +296,10 @@
       </div>
     {/if}
   </div>
-
   {#snippet footer()}
     <div
-      class="absolute inset-x-0 bottom-0 z-20 border-t border-app-separator bg-app-surface px-5 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-3 shadow-[0_-12px_24px_rgb(0_0_0_/_0.28)]"
+      class="z-20 border-t border-app-separator bg-app-surface px-5 pt-3 shadow-[0_-12px_24px_rgb(0_0_0_/_0.28)]"
+      style="padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);"
     >
       <button
         type="button"
