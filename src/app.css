@@ -45,3 +45,14 @@
   --color-app-secondary-label: #aeaeb2;
   --color-app-separator: rgb(255 255 255 / 0.12);
 }
+
+/* Prevent iOS Safari from exposing its default white document canvas around
+   translucent browser chrome, safe areas, and rubber-band overscroll. */
+:root,
+html,
+body {
+  min-height: 100%;
+  margin: 0;
+  background-color: #000000;
+  color-scheme: dark;
+}
