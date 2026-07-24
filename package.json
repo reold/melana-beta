@@ -22,6 +22,7 @@
     "vite": "^8.0.16"
   },
   "dependencies": {
+    "@harshmandan/svaul": "^2.0.0",
     "@tailwindcss/vite": "^4.3.3",
     "tailwindcss": "^4.3.3"
   }

@@ -15,6 +15,31 @@ export interface MediaSummary {
   overview: string;
 }
 
+export interface CastMember {
+  id: number;
+  name: string;
+  character: string;
+  profilePath: string | null;
+}
+
+export interface MediaDetails extends MediaSummary {
+  tagline: string | null;
+  genres: string[];
+  runtime: number | null;
+  status: string | null;
+  originalLanguage: string | null;
+  cast: CastMember[];
+  numberOfSeasons: number | null;
+  numberOfEpisodes: number | null;
+  networks: string[];
+  creators: string[];
+  seasons: {
+    name: string;
+    seasonNumber: number;
+    episodeCount: number | null;
+  }[];
+}
+
 export interface CatalogPage {
   items: MediaSummary[];
   hasMore: boolean;

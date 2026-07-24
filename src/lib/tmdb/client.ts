@@ -1,5 +1,11 @@
 import { PUBLIC_TMDB_API_KEY } from "$env/static/public";
-import type { BrowseSort, MediaSummary, MediaType } from "./types";
+import type {
+  BrowseSort,
+  CastMember,
+  MediaDetails,
+  MediaSummary,
+  MediaType,
+} from "./types";
 
 const API_BASE = "https://api.themoviedb.org/3";
 const IMAGE_BASE = "https://image.tmdb.org/t/p";
@@ -156,6 +162,88 @@ export async function searchMixedMedia(
   return {
     items: mediaItems.map((item) => normalize(item, item.media_type)),
     hasMore: data.page < data.total_pages,
+  };
+}
+
+interface TmdbDetails extends TmdbResult {
+  tagline?: string;
+  runtime?: number | null;
+  status?: string;
+  original_language?: string;
+  genres?: { name: string }[];
+  credits?: { cast?: TmdbCast[] };
+  aggregate_credits?: { cast?: TmdbTvCast[] };
+  number_of_seasons?: number;
+  number_of_episodes?: number;
+  networks?: { name: string }[];
+  created_by?: { name: string }[];
+  seasons?: {
+    name: string;
+    season_number: number;
+    episode_count: number | null;
+  }[];
+}
+
+interface TmdbCast {
+  id: number;
+  name: string;
+  character?: string;
+  profile_path?: string | null;
+}
+
+interface TmdbTvCast {
+  id: number;
+  name: string;
+  roles?: { character?: string }[];
+  profile_path?: string | null;
+}
+
+function normalizeCast(cast: TmdbCast[] | TmdbTvCast[]): CastMember[] {
+  return cast.slice(0, 18).map((person) => ({
+    id: person.id,
+    name: person.name,
+    character:
+      "roles" in person
+        ? (person.roles?.[0]?.character ?? "")
+        : (person.character ?? ""),
+    profilePath: person.profile_path ?? null,
+  }));
+}
+
+export async function fetchMediaDetails(
+  media: MediaSummary,
+  signal?: AbortSignal,
+): Promise<MediaDetails> {
+  const append = media.mediaType === "movie" ? "credits" : "aggregate_credits";
+  const raw = await request<TmdbDetails>(
+    `/${media.mediaType}/${media.id}`,
+    { append_to_response: append },
+    signal,
+  );
+  const summary = normalize(raw, media.mediaType);
+  const cast =
+    media.mediaType === "movie"
+      ? normalizeCast(raw.credits?.cast ?? [])
+      : normalizeCast(raw.aggregate_credits?.cast ?? []);
+
+  return {
+    ...summary,
+    tagline: raw.tagline?.trim() || null,
+    genres: raw.genres?.map((genre) => genre.name) ?? [],
+    runtime: raw.runtime ?? null,
+    status: raw.status ?? null,
+    originalLanguage: raw.original_language?.toUpperCase() ?? null,
+    cast,
+    numberOfSeasons: raw.number_of_seasons ?? null,
+    numberOfEpisodes: raw.number_of_episodes ?? null,
+    networks: raw.networks?.map((network) => network.name) ?? [],
+    creators: raw.created_by?.map((person) => person.name) ?? [],
+    seasons:
+      raw.seasons?.map((season) => ({
+        name: season.name,
+        seasonNumber: season.season_number,
+        episodeCount: season.episode_count,
+      })) ?? [],
   };
 }
 

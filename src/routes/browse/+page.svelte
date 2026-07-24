@@ -4,14 +4,16 @@
   import Dropdown from "$lib/common/Dropdown.svelte";
   import TagsSelect from "$lib/common/TagSelect.svelte";
   import VirtualPosterGrid from "$lib/browse/VirtualPosterGrid.svelte";
+  import MediaDetailsSheet from "$lib/browse/MediaDetailsSheet.svelte";
   import { CatalogState } from "$lib/catalog/catalog-state.svelte";
   import type { BrowseSort, MediaSummary, MediaType } from "$lib/tmdb/types";
 
   interface Props {
     onSelect?: (item: MediaSummary) => void;
+    onPlay?: (item: MediaSummary) => void;
   }
 
-  let { onSelect = () => {} }: Props = $props();
+  let { onSelect = () => {}, onPlay = () => {} }: Props = $props();
 
   const sortOptions = ["Popularity", "Rating", "Date"] as const;
   const tagOptions = ["TV Shows", "Movies"] as const;
@@ -32,6 +34,10 @@
   let searchInput = $state<HTMLInputElement | null>(null);
   let searchFocused = $state(false);
   let keyboardInset = $state(0);
+  let searchFocusScrollY = 0;
+  let preserveSearchScrollUntil = 0;
+  let selectedItem = $state<MediaSummary | null>(null);
+  let detailsOpen = $state(false);
 
   const isSearchMode = $derived(searchQuery.trim().length > 0);
   const selectedMediaTypes = $derived(
@@ -54,6 +60,12 @@
 
   onDestroy(() => catalog.destroy());
 
+  function restoreSearchScrollPosition() {
+    if (searchFocused && Date.now() < preserveSearchScrollUntil) {
+      window.scrollTo(0, searchFocusScrollY);
+    }
+  }
+
   function updateKeyboardInset() {
     const viewport = window.visualViewport;
     if (!viewport || !searchFocused) {
@@ -67,6 +79,7 @@
       0,
       window.innerHeight - viewport.height - viewport.offsetTop,
     );
+    restoreSearchScrollPosition();
   }
 
   onMount(() => {
@@ -83,13 +96,30 @@
   });
 
   function handleSearchFocus() {
+    // Safari may scroll the layout viewport to reveal a fixed input. Preserve
+    // the browse position while its keyboard-opening animation settles.
+    searchFocusScrollY = window.scrollY;
+    preserveSearchScrollUntil = Date.now() + 750;
     searchFocused = true;
-    requestAnimationFrame(updateKeyboardInset);
+
+    requestAnimationFrame(() => {
+      updateKeyboardInset();
+      restoreSearchScrollPosition();
+    });
+    window.setTimeout(restoreSearchScrollPosition, 120);
+    window.setTimeout(restoreSearchScrollPosition, 360);
   }
 
   function handleSearchBlur() {
     searchFocused = false;
+    preserveSearchScrollUntil = 0;
     keyboardInset = 0;
+  }
+
+  function handleSelect(item: MediaSummary) {
+    selectedItem = item;
+    detailsOpen = true;
+    onSelect(item);
   }
 
   function clearSearch() {
@@ -114,7 +144,10 @@
   </svg>
 {/snippet}
 
-<div class="min-h-screen bg-app-canvas text-app-label">
+<div
+  data-svaul-drawer-wrapper
+  class="min-h-screen bg-app-canvas text-app-label"
+>
   <header class="relative overflow-hidden px-5 pb-5 pt-14">
     <div
       class="pointer-events-none absolute inset-0 bg-cover bg-center opacity-25"
@@ -156,7 +189,7 @@
     loadMoreError={catalog.loadMoreError}
     onLoadMore={() => catalog.loadMore()}
     onRetry={() => catalog.retry()}
-    {onSelect}
+    onSelect={handleSelect}
   />
 
   <div
@@ -202,6 +235,8 @@
     </button>
   </div>
 </div>
+
+<MediaDetailsSheet item={selectedItem} bind:open={detailsOpen} {onPlay} />
 
 <style>
   .texture-fade {
