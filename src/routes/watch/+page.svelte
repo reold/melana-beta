@@ -1,6 +1,7 @@
 <script lang="ts">
   import { browser } from "$app/environment";
   import { goto } from "$app/navigation";
+  import { resolve } from "$app/paths";
   import { page } from "$app/state";
   import { getStream, proxiedStreamUrl, type StreamSource } from "$lib/streaming/client";
   import { attachHls } from "$lib/streaming/hls";
@@ -158,7 +159,7 @@
     <button
       type="button"
       class="mb-5 inline-flex items-center gap-2 rounded-lg px-2 py-2 text-sm font-bold text-app-secondary-label hover:bg-apple-white/10 hover:text-app-label"
-      onclick={() => goto("/browse")}
+      onclick={() => goto(resolve("/browse"))}
     >
       <span aria-hidden="true">←</span> Back to browse
     </button>
