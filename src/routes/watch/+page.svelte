@@ -2,7 +2,8 @@
   import { browser } from "$app/environment";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
-  import { getStream, type StreamQuality } from "$lib/streaming/client";
+  import { getStream, proxiedStreamUrl, type StreamSource } from "$lib/streaming/client";
+  import { attachHls } from "$lib/streaming/hls";
   import { fetchMediaDetails, tmdbPosterUrl } from "$lib/tmdb/client";
   import type { MediaDetails, MediaSummary, MediaType } from "$lib/tmdb/types";
 
@@ -22,15 +23,11 @@
   let detailsLoading = $state(false);
   let season = $state(1);
   let episode = $state(1);
-  let qualities = $state<StreamQuality[]>([]);
-  let selectedQuality = $state("");
+  let source = $state<StreamSource | null>(null);
   let loading = $state(false);
   let error = $state<string | null>(null);
   let video = $state<HTMLVideoElement | null>(null);
 
-  const selectedSource = $derived(
-    qualities.find((quality) => quality.label === selectedQuality) ?? qualities[0] ?? null,
-  );
   const seasons = $derived(
     (details?.seasons ?? []).filter((item) => item.seasonNumber > 0),
   );
@@ -40,6 +37,19 @@
   const displayPoster = $derived(
     details ? tmdbPosterUrl(details.posterPath, "w500") : tmdbPosterUrl(posterPath, "w500"),
   );
+
+  // Vidfast returns sidecar subtitle tracks alongside the HLS playlist; expose
+  // them as <track> children so the native controls can toggle them.
+  const subtitleTracks = $derived.by(() => {
+    const current = source;
+    if (!current) return [];
+    return current.tracks.map((track) => ({
+      src: proxiedStreamUrl(track.file, current.noReferrer),
+      label: track.label,
+      srclang: languageCode(track.label),
+    }));
+  });
+  const defaultTrackIndex = $derived(source?.englishTrackIndex ?? -1);
 
   function mediaSummary(): MediaSummary | null {
     if (!mediaType || !validRequest) return null;
@@ -92,14 +102,12 @@
     const controller = new AbortController();
     loading = true;
     error = null;
-    qualities = [];
-    selectedQuality = "";
+    source = null;
 
     void getStream(mediaType, idParam, season, episode, controller.signal)
-      .then((sources) => {
+      .then((result) => {
         if (controller.signal.aborted) return;
-        qualities = sources;
-        selectedQuality = sources[0].label;
+        source = result;
       })
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) {
@@ -113,16 +121,31 @@
     return () => controller.abort();
   });
 
+  // Attach the Vidfast HLS playlist to the <video> element whenever a new source
+  // resolves. hls.js handles non-Safari browsers; Safari/iOS use native HLS.
+  $effect(() => {
+    const el = video;
+    const src = source;
+    if (!el || !src) return;
+    const attachment = attachHls(el, src.url, src.noReferrer);
+    return () => attachment?.destroy();
+  });
+
   function selectSeason(value: number) {
     season = value;
     episode = 1;
   }
 
-  function selectQuality(value: string) {
-    selectedQuality = value;
-    // Changing a <video> source requires a new load; play is intentionally not
-    // forced because browsers require it to originate from a user gesture.
-    requestAnimationFrame(() => video?.load());
+  // Vidfast hands back human-readable track labels ("English", "zh-tw", …).
+  // Derive a stable, unique BCP-47-ish token so each <track> gets an srclang;
+  // the readable label is what the player actually displays.
+  function languageCode(label: string): string {
+    const code = label
+      .normalize("NFKD")
+      .replace(/[^a-zA-Z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .toLowerCase();
+    return code || "subtitle";
   }
 </script>
 
@@ -158,16 +181,25 @@
               <p class="font-bold text-apple-red">Unable to load video</p>
               <p class="mt-2 max-w-md text-sm text-app-secondary-label">{error}</p>
             </div>
-          {:else if selectedSource}
+          {:else if source}
             <video
               bind:this={video}
               class="h-full w-full bg-black"
               controls
               playsinline
+              crossorigin="anonymous"
               poster={displayPoster ?? undefined}
               aria-label={`Watch ${displayTitle}`}
             >
-              <source src={selectedSource.url} type={selectedSource.type === "mp4" ? "video/mp4" : selectedSource.type} />
+              {#each subtitleTracks as track, i (track.srclang + track.src)}
+                <track
+                  kind="subtitles"
+                  src={track.src}
+                  srclang={track.srclang}
+                  label={track.label}
+                  default={i === defaultTrackIndex}
+                />
+              {/each}
               Your browser does not support HTML5 video.
             </video>
           {/if}
@@ -180,7 +212,12 @@
         {/if}
         <section class="min-w-0 flex-1">
           <p class="text-xs font-bold uppercase tracking-[0.16em] text-apple-green">{mediaType === "tv" ? "TV show" : "Movie"}</p>
-          <h1 class="mt-1 text-3xl font-extrabold tracking-tight">{displayTitle}</h1>
+          <div class="mt-1 flex flex-wrap items-center gap-2">
+            <h1 class="text-3xl font-extrabold tracking-tight">{displayTitle}</h1>
+            {#if source?.is4k}
+              <span class="rounded-md bg-apple-green/15 px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-apple-green">4K</span>
+            {/if}
+          </div>
 
           {#if mediaType === "tv"}
             <div class="mt-5 grid gap-3 sm:grid-cols-2">
@@ -206,17 +243,6 @@
               </label>
             </div>
             {#if detailsLoading}<p class="mt-2 text-xs text-app-secondary-label">Loading episode information…</p>{/if}
-          {/if}
-
-          {#if qualities.length > 1}
-            <label class="mt-5 grid max-w-xs gap-1.5 text-sm font-semibold">
-              Quality
-              <select value={selectedQuality} onchange={(event) => selectQuality(event.currentTarget.value)} class="rounded-lg border border-app-separator bg-app-surface px-3 py-2.5 font-medium outline-none focus:border-apple-green">
-                {#each qualities as quality (quality.label)}
-                  <option value={quality.label}>{quality.label}p{quality.codecName ? ` · ${quality.codecName}` : ""}</option>
-                {/each}
-              </select>
-            </label>
           {/if}
         </section>
       </div>
