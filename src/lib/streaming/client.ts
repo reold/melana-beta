@@ -10,7 +10,7 @@ import type { MediaType } from "$lib/tmdb/types";
  * rather than the per-quality files Vidlink used to expose.
  */
 const DEFAULT_PROXY_ORIGIN = "https://melana-rs.onrender.com";
-const VIDFAST_ORIGIN = "https://vidfast.pro";
+const VIDFAST_ORIGIN = "https://vidfast.vc";
 const proxyOrigin = (
   import.meta.env.PUBLIC_STREAM_PROXY_ORIGIN || DEFAULT_PROXY_ORIGIN
 ).replace(/\/$/, "");
