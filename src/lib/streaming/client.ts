@@ -15,9 +15,6 @@ const proxyOrigin = (
   import.meta.env.PUBLIC_STREAM_PROXY_ORIGIN || DEFAULT_PROXY_ORIGIN
 ).replace(/\/$/, "");
 
-/** Exposed so the HLS loader can recognise URLs that are already proxied. */
-export const streamProxyOrigin = proxyOrigin;
-
 export interface SubtitleTrack {
   file: string;
   label: string;

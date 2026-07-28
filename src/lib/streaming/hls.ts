@@ -1,8 +1,4 @@
-import Hls, {
-  type LoaderCallbacks,
-  type LoaderConfiguration,
-  type LoaderContext,
-} from "hls.js";
+import Hls from "hls.js";
 import { isProxiedStreamUrl, proxiedStreamUrl } from "./client";
 
 export interface HlsAttachment {
@@ -13,10 +9,10 @@ export interface HlsAttachment {
  * Attach a Vidfast HLS playlist to a `<video>` element with cross-browser
  * support.
  *
- * Every playlist, segment and key request is funnelled through the stream proxy
- * so the provider's required origin/referrer is supplied and CORS is satisfied
- * for the browser. Safari and iOS use their built-in HLS engine instead, in
- * which case only the playlist URL is proxied.
+ * Only the initial playlist request needs to be sent through the stream proxy.
+ * The proxy rewrites the returned HLS manifest so its variant playlists,
+ * segments and keys already point back through `/proxy`; hls.js and native HLS
+ * can therefore follow those URLs without a custom request loader.
  *
  * Returns `null` when neither MSE-backed playback nor native HLS is available.
  */
@@ -25,10 +21,14 @@ export function attachHls(
   playlistUrl: string,
   noReferrer: boolean,
 ): HlsAttachment | null {
-  // Safari / iOS play HLS natively. Media-element playback does not require
-  // CORS, but routing through the proxy keeps the referrer correct.
+  const sourceUrl = isProxiedStreamUrl(playlistUrl)
+    ? playlistUrl
+    : proxiedStreamUrl(playlistUrl, noReferrer);
+
+  // Safari / iOS play HLS natively. The rewritten manifest ensures all of the
+  // media element's subsequent requests continue through the proxy as well.
   if (video.canPlayType("application/vnd.apple.mpegurl")) {
-    video.src = proxiedStreamUrl(playlistUrl, noReferrer);
+    video.src = sourceUrl;
     return {
       destroy() {
         video.removeAttribute("src");
@@ -41,35 +41,13 @@ export function attachHls(
     return null;
   }
 
-  const hls = new Hls({
-    // Rewrite every request through the stream proxy unless it already is.
-    loader: buildProxyLoader(noReferrer),
-  });
-
-  hls.loadSource(playlistUrl);
+  const hls = new Hls();
+  hls.loadSource(sourceUrl);
   hls.attachMedia(video);
 
   return {
     destroy() {
       hls.destroy();
     },
-  };
-}
-
-function buildProxyLoader(noReferrer: boolean) {
-  // Subclass the configured default loader (XHR or Fetch) so retries, stats and
-  // progress reporting keep working — only the request URL is rewritten.
-  const BaseLoader = Hls.DefaultConfig.loader;
-  return class extends BaseLoader {
-    load(
-      context: LoaderContext,
-      config: LoaderConfiguration,
-      callbacks: LoaderCallbacks<LoaderContext>,
-    ): void {
-      if (context.url && !isProxiedStreamUrl(context.url)) {
-        context.url = proxiedStreamUrl(context.url, noReferrer);
-      }
-      super.load(context, config, callbacks);
-    }
   };
 }
