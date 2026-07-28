@@ -24,6 +24,7 @@
   "dependencies": {
     "@harshmandan/svaul": "^2.0.0",
     "@tailwindcss/vite": "^4.3.3",
+    "hls.js": "^1.6.16",
     "tailwindcss": "^4.3.3"
   }
 }

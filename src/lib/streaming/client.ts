@@ -1,29 +1,42 @@
 import type { MediaType } from "$lib/tmdb/types";
 
-/** The public API that resolves a TMDB title into playable sources. */
+/**
+ * The public API that resolves a TMDB title into a playable source.
+ *
+ * Stream sources are fetched through a small proxy (`melana-rs`) which both
+ * scrapes the Vidfast embed (the `/vidfast/...` JSON endpoints below) and
+ * re-serves the underlying media with the correct origin/referrer headers (the
+ * `/proxy` endpoint). Vidfast returns a single adaptive-bitrate HLS playlist
+ * rather than the per-quality files Vidlink used to expose.
+ */
 const DEFAULT_PROXY_ORIGIN = "https://melana-rs.onrender.com";
-const VIDLINK_ORIGIN = "https://vidlink.pro";
+const VIDFAST_ORIGIN = "https://vidfast.vc";
 const proxyOrigin = (
   import.meta.env.PUBLIC_STREAM_PROXY_ORIGIN || DEFAULT_PROXY_ORIGIN
 ).replace(/\/$/, "");
 
-export interface StreamQuality {
+/** Exposed so the HLS loader can recognise URLs that are already proxied. */
+export const streamProxyOrigin = proxyOrigin;
+
+export interface SubtitleTrack {
+  file: string;
   label: string;
+}
+
+export interface StreamSource {
+  /** Raw HLS playlist URL returned by the stream service. */
   url: string;
-  type: string;
-  codecName: string | null;
-}
-
-interface ProxyQuality {
-  url?: unknown;
-  type?: unknown;
-  codecName?: unknown;
-}
-
-interface ProxyResponse {
-  stream?: {
-    qualities?: Record<string, ProxyQuality>;
-  };
+  /**
+   * When `true` the source must be fetched without a Referer; otherwise the
+   * provider origin is attached by the proxy. Surfaced from Vidfast's response.
+   */
+  noReferrer: boolean;
+  tracks: SubtitleTrack[];
+  /** Index of the preferred English track within `tracks`, when known. */
+  englishTrackIndex: number | null;
+  is4k: boolean;
+  title: string | null;
+  tmdbId: number | null;
 }
 
 export class StreamError extends Error {
@@ -33,17 +46,36 @@ export class StreamError extends Error {
   }
 }
 
-function proxiedStreamUrl(url: string): string {
-  const params = new URLSearchParams({
-    url,
-    origin: VIDLINK_ORIGIN,
-  });
+interface RawTrack {
+  file?: unknown;
+  label?: unknown;
+}
+
+interface VidfastResponse {
+  url?: unknown;
+  noReferrer?: unknown;
+  "4kAvailable"?: unknown;
+  tracks?: unknown;
+  englishTrackIndex?: unknown;
+  title?: unknown;
+  tmdbId?: unknown;
+}
+
+/**
+ * Wrap an arbitrary media URL in the stream proxy. The provider origin is
+ * attached unless the source explicitly requires no referrer, matching how
+ * Vidfast signals referrer handling via its `noReferrer` field.
+ * URLSearchParams safely preserves any signed query string.
+ */
+export function proxiedStreamUrl(url: string, noReferrer = false): string {
+  const params = new URLSearchParams({ url });
+  if (!noReferrer) params.set("origin", VIDFAST_ORIGIN);
   return `${proxyOrigin}/proxy?${params}`;
 }
 
-function qualityRank(label: string): number {
-  const parsed = Number.parseInt(label, 10);
-  return Number.isFinite(parsed) ? parsed : 0;
+/** True when a URL already points at the stream proxy (avoids double-wrapping). */
+export function isProxiedStreamUrl(url: string): boolean {
+  return url.startsWith(`${proxyOrigin}/proxy?`);
 }
 
 export async function getStream(
@@ -52,11 +84,11 @@ export async function getStream(
   season?: number,
   episode?: number,
   signal?: AbortSignal,
-): Promise<StreamQuality[]> {
+): Promise<StreamSource> {
   const path =
     mediaType === "movie"
-      ? `/vidlink/movie/${tmdbId}`
-      : `/vidlink/tv/${tmdbId}/${season}/${episode}`;
+      ? `/vidfast/movie/${tmdbId}`
+      : `/vidfast/tv/${tmdbId}/${season}/${episode}`;
   const response = await fetch(`${proxyOrigin}${path}`, {
     signal,
     headers: { Accept: "application/json" },
@@ -66,31 +98,45 @@ export async function getStream(
     throw new StreamError(`The stream service returned ${response.status}.`);
   }
 
-  let payload: ProxyResponse;
+  let payload: VidfastResponse;
   try {
-    payload = (await response.json()) as ProxyResponse;
+    payload = (await response.json()) as VidfastResponse;
   } catch {
     throw new StreamError("The stream service returned an invalid response.");
   }
 
-  const qualities = Object.entries(payload.stream?.qualities ?? {})
-    .flatMap(([label, source]) => {
-      if (typeof source.url !== "string" || !source.url) return [];
-      return [{
-        label,
-        // Stream URLs must be fetched through the proxy so Vidlink's origin is
-        // supplied with every request. URLSearchParams safely preserves any
-        // signed query string without needing to transform the source URL.
-        url: proxiedStreamUrl(source.url),
-        type: typeof source.type === "string" ? source.type : "video/mp4",
-        codecName: typeof source.codecName === "string" ? source.codecName : null,
-      }];
-    })
-    .sort((a, b) => qualityRank(b.label) - qualityRank(a.label));
-
-  if (!qualities.length) {
+  if (typeof payload.url !== "string" || !payload.url) {
     throw new StreamError("No playable video sources were returned for this title.");
   }
 
-  return qualities;
+  const tracks = Array.isArray(payload.tracks)
+    ? payload.tracks.flatMap((raw): SubtitleTrack[] => {
+        if (!raw || typeof raw !== "object") return [];
+        const track = raw as RawTrack;
+        if (typeof track.file !== "string" || !track.file) return [];
+        return [{
+          file: track.file,
+          label:
+            typeof track.label === "string" && track.label ? track.label : "Subtitle",
+        }];
+      })
+    : [];
+
+  const englishTrackIndex =
+    typeof payload.englishTrackIndex === "number" &&
+    Number.isInteger(payload.englishTrackIndex) &&
+    payload.englishTrackIndex >= 0 &&
+    payload.englishTrackIndex < tracks.length
+      ? payload.englishTrackIndex
+      : null;
+
+  return {
+    url: payload.url,
+    noReferrer: payload.noReferrer === true,
+    tracks,
+    englishTrackIndex,
+    is4k: payload["4kAvailable"] === true,
+    title: typeof payload.title === "string" ? payload.title : null,
+    tmdbId: typeof payload.tmdbId === "number" ? payload.tmdbId : null,
+  };
 }
