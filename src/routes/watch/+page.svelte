@@ -39,7 +39,7 @@
     details ? tmdbPosterUrl(details.posterPath, "w500") : tmdbPosterUrl(posterPath, "w500"),
   );
 
-  // Vidfast returns sidecar subtitle tracks alongside the HLS playlist; expose
+  // VidCore returns sidecar subtitle tracks alongside the HLS playlist; expose
   // them as <track> children so the native controls can toggle them.
   const subtitleTracks = $derived.by(() => {
     const current = source;
@@ -122,7 +122,7 @@
     return () => controller.abort();
   });
 
-  // Attach the Vidfast HLS playlist to the <video> element whenever a new source
+  // Attach the VidCore HLS playlist to the <video> element whenever a new source
   // resolves. hls.js handles non-Safari browsers; Safari/iOS use native HLS.
   $effect(() => {
     const el = video;
@@ -137,7 +137,7 @@
     episode = 1;
   }
 
-  // Vidfast hands back human-readable track labels ("English", "zh-tw", …).
+  // VidCore hands back human-readable track labels ("English", "zh-tw", …).
   // Derive a stable, unique BCP-47-ish token so each <track> gets an srclang;
   // the readable label is what the player actually displays.
   function languageCode(label: string): string {
