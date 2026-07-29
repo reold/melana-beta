@@ -4,13 +4,13 @@ import type { MediaType } from "$lib/tmdb/types";
  * The public API that resolves a TMDB title into a playable source.
  *
  * Stream sources are fetched through a small proxy (`melana-rs`) which both
- * scrapes the Vidfast embed (the `/vidfast/...` JSON endpoints below) and
+ * scrapes the VidCore embed (the `/vidcore/...` JSON endpoints below) and
  * re-serves the underlying media with the correct origin/referrer headers (the
- * `/proxy` endpoint). Vidfast returns a single adaptive-bitrate HLS playlist
+ * `/proxy` endpoint). VidCore returns a single adaptive-bitrate HLS playlist
  * rather than the per-quality files Vidlink used to expose.
  */
 const DEFAULT_PROXY_ORIGIN = "https://melana-rs.onrender.com";
-const VIDFAST_ORIGIN = "https://vidfast.vc";
+const VIDCORE_ORIGIN = "https://vidcore.net";
 const proxyOrigin = (
   import.meta.env.PUBLIC_STREAM_PROXY_ORIGIN || DEFAULT_PROXY_ORIGIN
 ).replace(/\/$/, "");
@@ -25,7 +25,7 @@ export interface StreamSource {
   url: string;
   /**
    * When `true` the source must be fetched without a Referer; otherwise the
-   * provider origin is attached by the proxy. Surfaced from Vidfast's response.
+   * provider origin is attached by the proxy. Surfaced from VidCore's response.
    */
   noReferrer: boolean;
   tracks: SubtitleTrack[];
@@ -48,7 +48,7 @@ interface RawTrack {
   label?: unknown;
 }
 
-interface VidfastResponse {
+interface VidCoreResponse {
   url?: unknown;
   noReferrer?: unknown;
   "4kAvailable"?: unknown;
@@ -61,12 +61,12 @@ interface VidfastResponse {
 /**
  * Wrap an arbitrary media URL in the stream proxy. The provider origin is
  * attached unless the source explicitly requires no referrer, matching how
- * Vidfast signals referrer handling via its `noReferrer` field.
+ * VidCore signals referrer handling via its `noReferrer` field.
  * URLSearchParams safely preserves any signed query string.
  */
 export function proxiedStreamUrl(url: string, noReferrer = false): string {
   const params = new URLSearchParams({ url });
-  if (!noReferrer) params.set("origin", VIDFAST_ORIGIN);
+  if (!noReferrer) params.set("origin", VIDCORE_ORIGIN);
   return `${proxyOrigin}/proxy?${params}`;
 }
 
@@ -84,8 +84,8 @@ export async function getStream(
 ): Promise<StreamSource> {
   const path =
     mediaType === "movie"
-      ? `/vidfast/movie/${tmdbId}`
-      : `/vidfast/tv/${tmdbId}/${season}/${episode}`;
+      ? `/vidcore/movie/${tmdbId}`
+      : `/vidcore/tv/${tmdbId}/${season}/${episode}`;
   const response = await fetch(`${proxyOrigin}${path}`, {
     signal,
     headers: { Accept: "application/json" },
@@ -95,9 +95,9 @@ export async function getStream(
     throw new StreamError(`The stream service returned ${response.status}.`);
   }
 
-  let payload: VidfastResponse;
+  let payload: VidCoreResponse;
   try {
-    payload = (await response.json()) as VidfastResponse;
+    payload = (await response.json()) as VidCoreResponse;
   } catch {
     throw new StreamError("The stream service returned an invalid response.");
   }

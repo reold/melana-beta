@@ -6,7 +6,7 @@ export interface HlsAttachment {
 }
 
 /**
- * Attach a Vidfast HLS playlist to a `<video>` element with cross-browser
+ * Attach a VidCore HLS playlist to a `<video>` element with cross-browser
  * support.
  *
  * Only the initial playlist request needs to be sent through the stream proxy.
