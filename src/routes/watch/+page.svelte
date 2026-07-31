@@ -128,8 +128,13 @@
     const el = video;
     const src = source;
     if (!el || !src) return;
-    const attachment = attachHls(el, src.url, src.noReferrer);
-    return () => attachment?.destroy();
+
+    const controller = new AbortController();
+    const attachment = attachHls(el, src.url, src.noReferrer, controller.signal);
+    return () => {
+      controller.abort();
+      attachment?.destroy();
+    };
   });
 
   function selectSeason(value: number) {
