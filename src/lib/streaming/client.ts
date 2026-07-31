@@ -10,7 +10,7 @@ import type { MediaType } from "$lib/tmdb/types";
  * rather than the per-quality files Vidlink used to expose.
  */
 const DEFAULT_PROXY_ORIGIN = "https://melana-rs.onrender.com";
-const VIDCORE_ORIGIN = "https://vidcore.net";
+const VIDCORE_ORIGIN = "https://vidfast.vc";
 const proxyOrigin = (
   import.meta.env.PUBLIC_STREAM_PROXY_ORIGIN || DEFAULT_PROXY_ORIGIN
 ).replace(/\/$/, "");
@@ -103,7 +103,9 @@ export async function getStream(
   }
 
   if (typeof payload.url !== "string" || !payload.url) {
-    throw new StreamError("No playable video sources were returned for this title.");
+    throw new StreamError(
+      "No playable video sources were returned for this title.",
+    );
   }
 
   const tracks = Array.isArray(payload.tracks)
@@ -111,11 +113,15 @@ export async function getStream(
         if (!raw || typeof raw !== "object") return [];
         const track = raw as RawTrack;
         if (typeof track.file !== "string" || !track.file) return [];
-        return [{
-          file: track.file,
-          label:
-            typeof track.label === "string" && track.label ? track.label : "Subtitle",
-        }];
+        return [
+          {
+            file: track.file,
+            label:
+              typeof track.label === "string" && track.label
+                ? track.label
+                : "Subtitle",
+          },
+        ];
       })
     : [];
 
