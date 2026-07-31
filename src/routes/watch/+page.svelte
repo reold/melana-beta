@@ -25,9 +25,11 @@
   let season = $state(1);
   let episode = $state(1);
   let source = $state<StreamSource | null>(null);
+  let selectedSubtitleIndex = $state<number | null>(null);
   let loading = $state(false);
   let error = $state<string | null>(null);
   let video = $state<HTMLVideoElement | null>(null);
+  let subtitleTrackElement = $state<HTMLTrackElement | null>(null);
 
   const seasons = $derived(
     (details?.seasons ?? []).filter((item) => item.seasonNumber > 0),
@@ -39,18 +41,34 @@
     details ? tmdbPosterUrl(details.posterPath, "w500") : tmdbPosterUrl(posterPath, "w500"),
   );
 
-  // VidCore returns sidecar subtitle tracks alongside the HLS playlist; expose
-  // them as <track> children so the native controls can toggle them.
+  // VidCore/Vidfast can return a very large list of sidecar subtitle files.
+  // Native <video> eagerly fetches every rendered <track> child in some browsers
+  // (notably Firefox), so keep the catalogue in JS but render no subtitle track
+  // until the user explicitly chooses one.
   const subtitleTracks = $derived.by(() => {
     const current = source;
     if (!current) return [];
-    return current.tracks.map((track) => ({
-      src: proxiedStreamUrl(track.file, current.noReferrer),
-      label: track.label,
-      srclang: languageCode(track.label),
-    }));
+
+    const seen = new Set<string>();
+    return current.tracks
+      .map((track, sourceIndex) => ({
+        src: proxiedStreamUrl(track.file, current.noReferrer),
+        label: track.label,
+        srclang: languageCode(track.label),
+        sourceIndex,
+      }))
+      .filter((track) => {
+        const key = `${track.label}\u0000${track.src}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
   });
-  const defaultTrackIndex = $derived(source?.englishTrackIndex ?? -1);
+  const selectedSubtitleTrack = $derived(
+    selectedSubtitleIndex === null
+      ? null
+      : (subtitleTracks.find((track) => track.sourceIndex === selectedSubtitleIndex) ?? null),
+  );
 
   function mediaSummary(): MediaSummary | null {
     if (!mediaType || !validRequest) return null;
@@ -104,11 +122,13 @@
     loading = true;
     error = null;
     source = null;
+    selectedSubtitleIndex = null;
 
     void getStream(mediaType, idParam, season, episode, controller.signal)
       .then((result) => {
         if (controller.signal.aborted) return;
         source = result;
+        selectedSubtitleIndex = null;
       })
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) {
@@ -135,6 +155,15 @@
       controller.abort();
       attachment?.destroy();
     };
+  });
+
+  // When a subtitle is selected, force its TextTrack into the visible state.
+  // This makes the custom selector work even though the browser's native track
+  // menu initially has no rendered tracks.
+  $effect(() => {
+    const track = subtitleTrackElement;
+    if (!track || !selectedSubtitleTrack) return;
+    track.track.mode = "showing";
   });
 
   function selectSeason(value: number) {
@@ -197,15 +226,18 @@
               poster={displayPoster ?? undefined}
               aria-label={`Watch ${displayTitle}`}
             >
-              {#each subtitleTracks as track, i (track.srclang + track.src)}
-                <track
-                  kind="subtitles"
-                  src={track.src}
-                  srclang={track.srclang}
-                  label={track.label}
-                  default={i === defaultTrackIndex}
-                />
-              {/each}
+              {#if selectedSubtitleTrack}
+                {#key selectedSubtitleTrack.src}
+                  <track
+                    bind:this={subtitleTrackElement}
+                    kind="subtitles"
+                    src={selectedSubtitleTrack.src}
+                    srclang={selectedSubtitleTrack.srclang}
+                    label={selectedSubtitleTrack.label}
+                    default
+                  />
+                {/key}
+              {/if}
               Your browser does not support HTML5 video.
             </video>
           {/if}
@@ -224,6 +256,25 @@
               <span class="rounded-md bg-apple-green/15 px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-apple-green">4K</span>
             {/if}
           </div>
+
+          {#if subtitleTracks.length}
+            <label class="mt-5 grid max-w-sm gap-1.5 text-sm font-semibold">
+              Subtitles
+              <select
+                value={selectedSubtitleIndex ?? ""}
+                onchange={(event) => {
+                  const value = event.currentTarget.value;
+                  selectedSubtitleIndex = value ? Number(value) : null;
+                }}
+                class="rounded-lg border border-app-separator bg-app-surface px-3 py-2.5 font-medium outline-none focus:border-apple-green"
+              >
+                <option value="">Off</option>
+                {#each subtitleTracks as track (track.sourceIndex)}
+                  <option value={track.sourceIndex}>{track.label}</option>
+                {/each}
+              </select>
+            </label>
+          {/if}
 
           {#if mediaType === "tv"}
             <div class="mt-5 grid gap-3 sm:grid-cols-2">
