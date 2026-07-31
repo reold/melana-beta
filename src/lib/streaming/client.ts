@@ -84,8 +84,8 @@ export async function getStream(
 ): Promise<StreamSource> {
   const path =
     mediaType === "movie"
-      ? `/vidcore/movie/${tmdbId}`
-      : `/vidcore/tv/${tmdbId}/${season}/${episode}`;
+      ? `/vidfast/movie/${tmdbId}`
+      : `/vidfast/tv/${tmdbId}/${season}/${episode}`;
   const response = await fetch(`${proxyOrigin}${path}`, {
     signal,
     headers: { Accept: "application/json" },
