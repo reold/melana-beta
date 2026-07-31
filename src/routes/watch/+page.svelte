@@ -223,6 +223,7 @@
               controls
               playsinline
               crossorigin="anonymous"
+              preload="auto"
               poster={displayPoster ?? undefined}
               aria-label={`Watch ${displayTitle}`}
             >

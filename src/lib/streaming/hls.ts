@@ -137,40 +137,102 @@ export function attachHls(
   }
 
   const hls = new Hls({
-    // Cap the number of parallel segment requests to reduce connection pressure.
-    maxBufferLength: 30,
+    // Prefer the lowest quality variant on cold start. Small initial segments
+    // arrive faster through a slow/cold proxy, letting us exit the buffering
+    // state quickly. hls.js will auto-upswitch as soon as it has bandwidth data.
+    startLevel: 0,
+
+    // Start as close to the beginning as possible.
+    startPosition: 0,
+
+    // Be eager about the very first fragments.
+    startFragPrefetch: true,
+
+    // Reasonable initial buffer target — not too large so we can start playback
+    // with the first couple of segments on a slow first fetch.
+    maxBufferLength: 12,
     maxMaxBufferLength: 600,
 
-    // Treat 4xx/5xx responses as errors rather than retrying indefinitely.
-    highBufferWatchdogPeriod: 2,
+    // Faster reaction to network stalls on first-load cold proxy.
+    highBufferWatchdogPeriod: 1.5,
 
     // Suppress console noise from failed IV/key fetches.
     debug: false,
   });
 
-  // Load the manifest asynchronously and clean it before handing to hls.js.
+  // Attach immediately then load the source synchronously.
+  // Previously loadSource was inside an async .then() (from manifest cleaner).
+  // That artificial delay after <video> mount was the main cause of the player
+  // staying in "buffering" forever on the *first* fetch even though the network
+  // requests succeeded. hls.js + the media element need to be told the source
+  // right away so their state machines advance as soon as bytes arrive.
+  hls.attachMedia(video);
+  hls.loadSource(sourceUrl);
+  // Explicit startLoad guarantees we begin even if any internal autoStartLoad
+  // timing is affected by the proxy latency.
+  hls.startLoad(0);
+
+  // Background: if the initial playlist (usually master) needs IV cleaning we
+  // can hot-reload the cleaned version. Because we already started, this is
+  // safe and only affects future segment decisions.
   let manifestBlobUrl: string | null = null;
-
   void cleanedManifestUrl(sourceUrl, signal).then(({ display, actual }) => {
-    // If the original URL was not proxied, re-wrap the cleaned manifest.
-    const loadUrl = isProxiedStreamUrl(display)
-      ? actual
-      : proxiedStreamUrl(actual, noReferrer);
+    if (!actual.startsWith("blob:")) return;
 
-    // If the manifest is a blob, keep a reference so we can revoke it on destroy.
-    if (actual.startsWith("blob:")) {
-      manifestBlobUrl = actual;
-    }
-
-    // If the blob is being loaded directly, use it as-is.
-    // Otherwise use the re-proxied URL.
-    hls.loadSource(actual.startsWith("blob:") ? actual : loadUrl);
+    manifestBlobUrl = actual;
+    hls.loadSource(actual);
+    hls.startLoad(0);
   });
 
-  hls.attachMedia(video);
+  // Robust error recovery (helps with transient proxy/cold-origin issues on first fetch).
+  hls.on(Hls.Events.ERROR, (_event, data) => {
+    if (data.fatal) {
+      switch (data.type) {
+        case Hls.ErrorTypes.NETWORK_ERROR:
+          // Many transient first-load proxy hiccups are recovered by restarting the load.
+          hls.startLoad();
+          break;
+        case Hls.ErrorTypes.MEDIA_ERROR:
+          hls.recoverMediaError();
+          break;
+        default:
+          // unrecoverable for this session
+          break;
+      }
+    }
+  });
+
+  // The key "unstick" for first-load cold proxy case:
+  // Even when all manifest + segment files have arrived over the network,
+  // the <video> can remain visually buffering because no one has ever
+  // successfully called play() after the media was ready.
+  // We try on several progressive events. The first successful one wins.
+  // All are wrapped so they never throw and never block.
+  const tryPlay = () => {
+    if (!video.paused) return;
+    void video.play().catch(() => {
+      /* autoplay policy or user has not yet interacted — that's fine */
+    });
+  };
+
+  hls.on(Hls.Events.MANIFEST_PARSED, tryPlay);
+  hls.on(Hls.Events.LEVEL_LOADED, tryPlay);
+  hls.on(Hls.Events.FRAG_BUFFERED, tryPlay);
+
+  // Also listen directly on the element in case hls events are late.
+  const onCanPlay = () => tryPlay();
+  video.addEventListener("canplay", onCanPlay, { once: true });
+  video.addEventListener("canplaythrough", onCanPlay, { once: true });
+
+  // If the element already has enough data by the time we get here, kick it.
+  if (video.readyState >= 2 /* HAVE_CURRENT_DATA */) {
+    tryPlay();
+  }
 
   return {
     destroy() {
+      video.removeEventListener("canplay", onCanPlay);
+      video.removeEventListener("canplaythrough", onCanPlay);
       if (manifestBlobUrl) {
         URL.revokeObjectURL(manifestBlobUrl);
       }
