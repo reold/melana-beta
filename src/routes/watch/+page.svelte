@@ -3,7 +3,7 @@
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { page } from "$app/state";
-  import { getStream, proxiedStreamUrl, type StreamSource, type GetStreamResult } from "$lib/streaming/client";
+  import { getStream, fastProxiedUrl, type StreamSource, type GetStreamResult } from "$lib/streaming/client";
   import { attachHls } from "$lib/streaming/hls";
   import { fetchMediaDetails, tmdbPosterUrl } from "$lib/tmdb/client";
   import type { MediaDetails, MediaSummary, MediaType } from "$lib/tmdb/types";
@@ -61,7 +61,8 @@
     const seen = new Set<string>();
     return current.tracks
       .map((track, sourceIndex) => ({
-        src: proxiedStreamUrl(track.file, current.noReferrer),
+        // Subtitles are small but benefit from fast edge proxy as well
+        src: fastProxiedUrl(track.file, current.noReferrer),
         label: track.label,
         srclang: languageCode(track.label),
         sourceIndex,
