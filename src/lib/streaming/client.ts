@@ -10,9 +10,16 @@ import type { MediaType } from "$lib/tmdb/types";
  * rather than the per-quality files Vidlink used to expose.
  */
 const DEFAULT_PROXY_ORIGIN = "https://melana-rs.onrender.com";
-const VIDCORE_ORIGIN = "https://vidfast.vc";
-const proxyOrigin = (
+const DEFAULT_FAST_PROXY_ORIGIN = "https://spadik.vercel.app";
+export const VIDCORE_ORIGIN = "https://vidfast.vc";
+
+export const proxyOrigin = (
   import.meta.env.PUBLIC_STREAM_PROXY_ORIGIN || DEFAULT_PROXY_ORIGIN
+).replace(/\/$/, "");
+
+export const fastProxyOrigin = (
+  (import.meta.env as any).PUBLIC_FAST_PROXY_ORIGIN ||
+  DEFAULT_FAST_PROXY_ORIGIN
 ).replace(/\/$/, "");
 
 export interface SubtitleTrack {
@@ -62,6 +69,20 @@ interface RawTrack {
   label?: unknown;
 }
 
+function buildProxyUrl(
+  baseOrigin: string,
+  url: string,
+  noReferrer: boolean,
+  extra: Record<string, string> = {},
+): string {
+  const params = new URLSearchParams({ url });
+  if (!noReferrer) params.set("origin", VIDCORE_ORIGIN);
+  for (const [k, v] of Object.entries(extra)) {
+    params.set(k, v);
+  }
+  return `${baseOrigin}/proxy?${params}`;
+}
+
 /**
  * Wrap an arbitrary media URL in the stream proxy. The provider origin is
  * attached unless the source explicitly requires no referrer, matching how
@@ -69,14 +90,97 @@ interface RawTrack {
  * URLSearchParams safely preserves any signed query string.
  */
 export function proxiedStreamUrl(url: string, noReferrer = false): string {
-  const params = new URLSearchParams({ url });
-  if (!noReferrer) params.set("origin", VIDCORE_ORIGIN);
-  return `${proxyOrigin}/proxy?${params}`;
+  return buildProxyUrl(proxyOrigin, url, noReferrer);
 }
 
-/** True when a URL already points at the stream proxy (avoids double-wrapping). */
+/**
+ * Melana proxy with `raw=true` – returns the upstream .m3u8 body untouched,
+ * with original URLs intact. Used for manifests so we can re-wrap segments
+ * through a faster proxy ourselves.
+ */
+export function proxiedManifestRawUrl(url: string, noReferrer = false): string {
+  return buildProxyUrl(proxyOrigin, url, noReferrer, { raw: "true" });
+}
+
+/**
+ * Fast segment proxy (e.g. spadik.vercel.app). Wraps every segment/key/
+ * subtitle URL through a CDN/edge that is much faster than Render.
+ * Uses the same origin header (vidfast) for auth.
+ */
+export function fastProxiedUrl(url: string, noReferrer = false): string {
+  return buildProxyUrl(fastProxyOrigin, url, noReferrer);
+}
+
+/** Alias – segments, subtitles, keys all go through the fast path */
+export const proxiedSegmentUrl = fastProxiedUrl;
+
+/** True when a URL already points at either proxy (avoids double-wrapping). */
 export function isProxiedStreamUrl(url: string): boolean {
-  return url.startsWith(`${proxyOrigin}/proxy?`);
+  return (
+    url.startsWith(`${proxyOrigin}/proxy?`) ||
+    url.startsWith(`${proxyOrigin}/proxy/`) ||
+    url.startsWith(`${fastProxyOrigin}/proxy?`) ||
+    url.startsWith(`${fastProxyOrigin}/proxy/`)
+  );
+}
+
+/**
+ * Extract the upstream URL from a proxied URL (both /proxy?url=… and /proxy/{base64json} forms).
+ * Returns null if the url is not a proxy url or cannot be decoded.
+ */
+export function extractUpstreamUrl(proxiedUrl: string): string | null {
+  try {
+    const u = new URL(proxiedUrl);
+    // Query form: /proxy?url=...
+    const q = u.searchParams.get("url");
+    if (q) return q;
+
+    // Base64 JSON form: /proxy/{base64}
+    // Path is /proxy/<payload>
+    const match = u.pathname.match(/\/proxy\/([^/]+)\/?$/);
+    if (match) {
+      const b64 = match[1];
+      // base64 may be url-safe; normalize
+      const normalized = b64.replace(/-/g, "+").replace(/_/g, "/");
+      const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+      try {
+        const jsonStr = atob(padded);
+        const obj = JSON.parse(jsonStr);
+        if (obj && typeof obj.url === "string") return obj.url;
+      } catch {
+        // may be plain base64-encoded url string?
+        try {
+          return atob(padded);
+        } catch {
+          // ignore
+        }
+      }
+    }
+  } catch {
+    // Not a valid URL – could be blob: or relative, ignore
+  }
+  return null;
+}
+
+/** Does the URL look like an HLS manifest (.m3u8 / .m3u) ? */
+export function isManifestUrl(url: string): boolean {
+  try {
+    const pathname = new URL(url).pathname.toLowerCase();
+    return pathname.endsWith(".m3u8") || pathname.endsWith(".m3u");
+  } catch {
+    // For relative URLs, test string directly ignoring query
+    const lower = url.split("?")[0].split("#")[0].toLowerCase();
+    return lower.endsWith(".m3u8") || lower.endsWith(".m3u");
+  }
+}
+
+export function resolveRelativeUrl(relativeOrAbsolute: string, base: string): string {
+  try {
+    if (/^https?:\/\//i.test(relativeOrAbsolute)) return relativeOrAbsolute;
+    return new URL(relativeOrAbsolute, base).href;
+  } catch {
+    return relativeOrAbsolute;
+  }
 }
 
 function parseStreamSource(payload: any): StreamSource | null {
