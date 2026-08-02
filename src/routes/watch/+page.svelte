@@ -159,7 +159,10 @@
   });
 
   // Attach the VidCore HLS playlist to the <video> element whenever a new source
-  // resolves. hls.js handles non-Safari browsers; Safari/iOS use native HLS.
+  // resolves. hls.js handles every modern browser — including Safari on
+  // macOS/iPadOS and iPhone/iPad on iOS 17.1+, which expose (Managed) Media
+  // Source — so the on-the-fly manifest rewrite runs everywhere. The native
+  // HLS path is only used on legacy WebKit builds where hls.js cannot run.
   $effect(() => {
     const el = video;
     const src = source;

@@ -197,8 +197,14 @@ function createRewriteLoader(noReferrer: boolean) {
 }
 
 // ---------------------------------------------------------------------------
-// Safari native HLS path – we must fully resolve master -> variant blobs
+// Legacy native HLS path (Safari without MSE/MMS) – resolve master -> variants
 // ---------------------------------------------------------------------------
+
+// Note: this path exists only for browsers where hls.js cannot run. Modern
+// Safari (macOS, iPadOS 13+, iOS 17.1+) all expose MediaSource or Apple's
+// ManagedMediaSource, so hls.js is used there and this code is not reached.
+// It is kept as a best-effort fallback for legacy iPhone Safari (< 17.1),
+// which neither exposes MSE nor accepts blob: playlists, so expect it to fail.
 
 async function fetchText(url: string, signal?: AbortSignal): Promise<string> {
   const res = await fetch(url, { signal });
@@ -220,13 +226,18 @@ interface NativeBuildResult {
 }
 
 /**
- * For Safari (no MSE) we cannot use a custom loader, so we fetch and
- * rewrite manifests ourselves into blob URLs.
+ * Legacy fallback for Safari/WebKit builds that lack MSE/MMS (iPhone before
+ * iOS 17.1, very old Safari). hls.js cannot run there and the native player
+ * cannot use our custom loader, so we fetch and rewrite manifests ourselves
+ * into blob URLs.
  *
  * - Master playlists: fetch each variant/audio playlist via Melana raw,
  *   rewrite their segments to fast proxy -> blob, then rewrite master to
  *   point to those blobs -> blob.
  * - Variant playlists: just rewrite segments to fast proxy -> blob.
+ *
+ * Caveat: iOS's native player has refused blob: HLS playlists since iOS 11
+ * (MEDIA_ERR_SRC_NOT_SUPPORTED), so on iPhones this is largely a dead end.
  */
 async function buildNativeSrc(
   melanaRawMasterUrl: string,
@@ -426,8 +437,12 @@ async function buildNativeSrc(
  * 2. A custom pLoader rewrites every manifest on the fly:
  *    - variant/audio .m3u8 -> Melana raw=true (still needs bypass)
  *    - segments/keys/subtitles -> Spadik fast proxy (edge, fast)
- * 3. Safari native path builds blob URLs for master+variants with segments
- *    already pointing to Spadik.
+ *
+ * hls.js is preferred on every browser that exposes MediaSource or Apple's
+ * ManagedMediaSource — including Safari on macOS/iPadOS and iPhone/iPad on
+ * iOS 17.1+. That keeps the manifest rewriting (which the native player can
+ * never do) on a single, proven code path. The native blob path below is only
+ * a fallback for ancient WebKit builds where hls.js cannot run.
  */
 export function attachHls(
   video: HTMLVideoElement,
@@ -444,50 +459,16 @@ export function attachHls(
   }
   const sourceUrl = proxiedManifestRawUrl(upstreamForProxy, noReferrer);
 
-  // Safari / iOS play HLS natively – no custom loader support.
-  if (video.canPlayType("application/vnd.apple.mpegurl")) {
-    // Build native blob(s) async – fallback to direct raw url if it fails
-    const abortCtrl = new AbortController();
-    const onExternalAbort = () => abortCtrl.abort();
-    signal?.addEventListener("abort", onExternalAbort, { once: true });
-
-    let nativeResult: NativeBuildResult | null = null;
-    let fallbackApplied = false;
-
-    void (async () => {
-      try {
-        nativeResult = await buildNativeSrc(sourceUrl, noReferrer, abortCtrl.signal);
-        if (abortCtrl.signal.aborted) return;
-        video.src = nativeResult.masterBlob;
-        // video.load() is implicit on src set but explicit for safety
-        video.load();
-      } catch (e) {
-        console.warn("[hls] native blob build failed, fallback to raw proxy", e);
-        if (!abortCtrl.signal.aborted && !fallbackApplied) {
-          fallbackApplied = true;
-          video.src = sourceUrl;
-        }
-      }
-    })();
-
-    return {
-      destroy() {
-        signal?.removeEventListener("abort", onExternalAbort);
-        abortCtrl.abort();
-        if (nativeResult) {
-          for (const b of nativeResult.allBlobs) {
-            try {
-              URL.revokeObjectURL(b);
-            } catch {}
-          }
-        }
-        video.removeAttribute("src");
-        video.load();
-      },
-    };
-  }
-
+  // Primary path: hls.js via MSE / Managed Media Source. iOS Safari 17.1+
+  // exposes ManagedMediaSource, so this is what runs on iPhones too.
   if (!Hls.isSupported()) {
+    // Legacy Safari without MSE (e.g. iPhone < iOS 17.1) – native HLS is the
+    // only option, but it cannot use our custom loader, so we pre-build blobs.
+    // Note iOS's native player refuses blob: playlists (broken since iOS 11),
+    // so treat this as best-effort only.
+    if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      return attachNativeHls(video, sourceUrl, noReferrer, signal);
+    }
     return null;
   }
 
@@ -546,6 +527,60 @@ export function attachHls(
       video.removeEventListener("canplay", onCanPlay);
       video.removeEventListener("canplaythrough", onCanPlay);
       hls.destroy();
+    },
+  };
+}
+
+/**
+ * Best-effort native HLS for WebKit builds where hls.js cannot run (legacy
+ * iPhone Safari < iOS 17.1). Builds blob playlists with segments rewritten to
+ * the fast proxy, falling back to the raw proxied manifest URL if the build
+ * fails. iOS Safari's native player has rejected blob: HLS playlists since
+ * iOS 11, so this path may show "not playable" regardless.
+ */
+function attachNativeHls(
+  video: HTMLVideoElement,
+  sourceUrl: string,
+  noReferrer: boolean,
+  signal?: AbortSignal,
+): HlsAttachment {
+  // Build native blob(s) async – fallback to direct raw url if it fails
+  const abortCtrl = new AbortController();
+  const onExternalAbort = () => abortCtrl.abort();
+  signal?.addEventListener("abort", onExternalAbort, { once: true });
+
+  let nativeResult: NativeBuildResult | null = null;
+  let fallbackApplied = false;
+
+  void (async () => {
+    try {
+      nativeResult = await buildNativeSrc(sourceUrl, noReferrer, abortCtrl.signal);
+      if (abortCtrl.signal.aborted) return;
+      video.src = nativeResult.masterBlob;
+      // video.load() is implicit on src set but explicit for safety
+      video.load();
+    } catch (e) {
+      console.warn("[hls] native blob build failed, fallback to raw proxy", e);
+      if (!abortCtrl.signal.aborted && !fallbackApplied) {
+        fallbackApplied = true;
+        video.src = sourceUrl;
+      }
+    }
+  })();
+
+  return {
+    destroy() {
+      signal?.removeEventListener("abort", onExternalAbort);
+      abortCtrl.abort();
+      if (nativeResult) {
+        for (const b of nativeResult.allBlobs) {
+          try {
+            URL.revokeObjectURL(b);
+          } catch {}
+        }
+      }
+      video.removeAttribute("src");
+      video.load();
     },
   };
 }
