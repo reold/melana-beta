@@ -36,6 +36,20 @@ export interface StreamSource {
   tmdbId: number | null;
 }
 
+export interface StreamServer {
+  name: string;
+  description?: string;
+}
+
+export interface StreamItem {
+  server: StreamServer;
+  result: StreamSource;
+}
+
+export interface GetStreamResult {
+  streams: StreamItem[];
+}
+
 export class StreamError extends Error {
   constructor(message: string) {
     super(message);
@@ -46,16 +60,6 @@ export class StreamError extends Error {
 interface RawTrack {
   file?: unknown;
   label?: unknown;
-}
-
-interface VidCoreResponse {
-  url?: unknown;
-  noReferrer?: unknown;
-  "4kAvailable"?: unknown;
-  tracks?: unknown;
-  englishTrackIndex?: unknown;
-  title?: unknown;
-  tmdbId?: unknown;
 }
 
 /**
@@ -75,37 +79,10 @@ export function isProxiedStreamUrl(url: string): boolean {
   return url.startsWith(`${proxyOrigin}/proxy?`);
 }
 
-export async function getStream(
-  mediaType: MediaType,
-  tmdbId: number,
-  season?: number,
-  episode?: number,
-  signal?: AbortSignal,
-): Promise<StreamSource> {
-  const path =
-    mediaType === "movie"
-      ? `/vidfast/movie/${tmdbId}`
-      : `/vidfast/tv/${tmdbId}/${season}/${episode}`;
-  const response = await fetch(`${proxyOrigin}${path}`, {
-    signal,
-    headers: { Accept: "application/json" },
-  });
-
-  if (!response.ok) {
-    throw new StreamError(`The stream service returned ${response.status}.`);
-  }
-
-  let payload: VidCoreResponse;
-  try {
-    payload = (await response.json()) as VidCoreResponse;
-  } catch {
-    throw new StreamError("The stream service returned an invalid response.");
-  }
-
+function parseStreamSource(payload: any): StreamSource | null {
+  if (!payload || typeof payload !== "object") return null;
   if (typeof payload.url !== "string" || !payload.url) {
-    throw new StreamError(
-      "No playable video sources were returned for this title.",
-    );
+    return null;
   }
 
   const tracks = Array.isArray(payload.tracks)
@@ -142,4 +119,75 @@ export async function getStream(
     title: typeof payload.title === "string" ? payload.title : null,
     tmdbId: typeof payload.tmdbId === "number" ? payload.tmdbId : null,
   };
+}
+
+export async function getStream(
+  mediaType: MediaType,
+  tmdbId: number,
+  season?: number,
+  episode?: number,
+  signal?: AbortSignal,
+): Promise<GetStreamResult> {
+  const path =
+    mediaType === "movie"
+      ? `/vidfast/movie/${tmdbId}`
+      : `/vidfast/tv/${tmdbId}/${season}/${episode}`;
+  const response = await fetch(`${proxyOrigin}${path}`, {
+    signal,
+    headers: { Accept: "application/json" },
+  });
+
+  if (!response.ok) {
+    throw new StreamError(`The stream service returned ${response.status}.`);
+  }
+
+  let payload: any;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new StreamError("The stream service returned an invalid response.");
+  }
+
+  if (payload && typeof payload === "object" && Array.isArray(payload.streams)) {
+    const streams: StreamItem[] = [];
+    for (const rawStream of payload.streams) {
+      if (!rawStream || typeof rawStream !== "object") continue;
+      const parsed = parseStreamSource(rawStream.result);
+      if (parsed) {
+        const rawServer = rawStream.server || {};
+        streams.push({
+          server: {
+            name: typeof rawServer.name === "string" ? rawServer.name : "Unknown",
+            description: typeof rawServer.description === "string" ? rawServer.description : undefined,
+          },
+          result: parsed,
+        });
+      }
+    }
+
+    if (streams.length === 0) {
+      throw new StreamError(
+        "No playable video sources were returned for this title.",
+      );
+    }
+
+    return { streams };
+  }
+
+  // Fallback to old single-source format
+  const singleParsed = parseStreamSource(payload);
+  if (singleParsed) {
+    return {
+      streams: [
+        {
+          server: { name: "Default" },
+          result: singleParsed,
+        },
+      ],
+    };
+  }
+
+  throw new StreamError(
+    "No playable video sources were returned for this title.",
+  );
 }

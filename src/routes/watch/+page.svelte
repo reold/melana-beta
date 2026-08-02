@@ -3,10 +3,11 @@
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { page } from "$app/state";
-  import { getStream, proxiedStreamUrl, type StreamSource } from "$lib/streaming/client";
+  import { getStream, proxiedStreamUrl, type StreamSource, type GetStreamResult } from "$lib/streaming/client";
   import { attachHls } from "$lib/streaming/hls";
   import { fetchMediaDetails, tmdbPosterUrl } from "$lib/tmdb/client";
   import type { MediaDetails, MediaSummary, MediaType } from "$lib/tmdb/types";
+  import Dropdown from "$lib/common/Dropdown.svelte";
 
   // Query parameters are read only in the browser because this static route is
   // prerendered at build time, when SvelteKit deliberately disallows page.url.
@@ -24,7 +25,15 @@
   let detailsLoading = $state(false);
   let season = $state(1);
   let episode = $state(1);
-  let source = $state<StreamSource | null>(null);
+  let streamResult = $state<GetStreamResult | null>(null);
+  let selectedServerName = $state<string>("");
+
+  const source = $derived.by(() => {
+    if (!streamResult || !selectedServerName) return null;
+    const item = streamResult.streams.find((s) => s.server.name === selectedServerName);
+    return item ? item.result : (streamResult.streams[0]?.result ?? null);
+  });
+
   let selectedSubtitleIndex = $state<number | null>(null);
   let loading = $state(false);
   let error = $state<string | null>(null);
@@ -121,13 +130,19 @@
     const controller = new AbortController();
     loading = true;
     error = null;
-    source = null;
+    streamResult = null;
+    selectedServerName = "";
     selectedSubtitleIndex = null;
 
     void getStream(mediaType, idParam, season, episode, controller.signal)
       .then((result) => {
         if (controller.signal.aborted) return;
-        source = result;
+        streamResult = result;
+        if (result.streams.length > 0) {
+          selectedServerName = result.streams[0].server.name;
+        } else {
+          selectedServerName = "";
+        }
         selectedSubtitleIndex = null;
       })
       .catch((reason: unknown) => {
@@ -257,6 +272,19 @@
               <span class="rounded-md bg-apple-green/15 px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-apple-green">4K</span>
             {/if}
           </div>
+
+          {#if streamResult && streamResult.streams.length > 0}
+            <div class="mt-5 flex flex-wrap items-center gap-4">
+              <Dropdown
+                label="Server"
+                options={streamResult.streams.map((s) => s.server.name)}
+                bind:value={selectedServerName}
+                onChange={() => {
+                  selectedSubtitleIndex = null;
+                }}
+              />
+            </div>
+          {/if}
 
           {#if subtitleTracks.length}
             <label class="mt-5 grid max-w-sm gap-1.5 text-sm font-semibold">
