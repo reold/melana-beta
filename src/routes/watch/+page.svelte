@@ -161,17 +161,17 @@
   // Attach the VidCore HLS playlist to the <video> element whenever a new source
   // resolves. hls.js handles every modern browser — including Safari on
   // macOS/iPadOS and iPhone/iPad on iOS 17.1+, which expose (Managed) Media
-  // Source — so the on-the-fly manifest rewrite runs everywhere. The native
-  // HLS path is only used on legacy WebKit builds where hls.js cannot run.
+  // Source. The stream proxy rewrites the manifest (variants, segments, keys,
+  // subtitles) to the fast edge proxy server-side, so hls.js runs with its
+  // default loader and the legacy native HLS path can play the proxied
+  // playlist directly.
   $effect(() => {
     const el = video;
     const src = source;
     if (!el || !src) return;
 
-    const controller = new AbortController();
-    const attachment = attachHls(el, src.url, src.noReferrer, controller.signal);
+    const attachment = attachHls(el, src.url, src.noReferrer);
     return () => {
-      controller.abort();
       attachment?.destroy();
     };
   });
