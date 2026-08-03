@@ -1,426 +1,12 @@
 import Hls from "hls.js";
 import {
   extractUpstreamUrl,
-  fastProxiedUrl,
-  isManifestUrl,
   isProxiedStreamUrl,
-  proxiedManifestRawUrl,
-  resolveRelativeUrl,
+  proxiedManifestUrl,
 } from "./client";
 
 export interface HlsAttachment {
   destroy(): void;
-}
-
-/** Matches IV/key ghost files that break playback (.ico/.key/.bin under quality folder) */
-const IV_FILE_REGEX = /\/(480p|720p|1080p|4k)\/[^/]*\.(?:ico|key|bin)(?:\?[^"']*)?$/i;
-
-function resolveUrl(relativeOrAbsolute: string, base: string): string {
-  const trimmed = relativeOrAbsolute.trim();
-  if (!trimmed) return trimmed;
-  try {
-    // If already absolute or blob:, keep as is
-    if (
-      /^https?:\/\//i.test(trimmed) ||
-      trimmed.startsWith("blob:") ||
-      trimmed.startsWith("data:")
-    ) {
-      return trimmed;
-    }
-    return resolveRelativeUrl(trimmed, base);
-  } catch {
-    return trimmed;
-  }
-}
-
-/**
- * Core manifest rewriter:
- * - strips broken IV file references from #EXT-X-KEY
- * - rewrites all URI="..." attributes:
- *    .m3u8/.m3u -> manifestProxy (Melana raw=true)
- *    else       -> segmentProxy (fast Spadik)
- * - rewrites bare URI lines:
- *    after EXT-X-STREAM-INF or ending in .m3u8 -> manifestProxy
- *    else -> segmentProxy
- *
- * This is the heart of the "raw + second proxy" optimization:
- * manifests are still fetched via Melana (WAF bypass), but every
- * segment/key/subtitle ends up going through the fast edge proxy.
- */
-export function rewriteManifest(
-  text: string,
-  baseUpstream: string,
-  manifestProxy: (absUrl: string) => string,
-  segmentProxy: (absUrl: string) => string,
-): string {
-  const lines = text.split(/\r?\n/);
-  const out: string[] = [];
-  let nextIsVariant = false;
-
-  for (const rawLine of lines) {
-    const trimmed = rawLine.trim();
-
-    if (!trimmed) {
-      out.push(rawLine);
-      nextIsVariant = false;
-      continue;
-    }
-
-    // #EXT-X-STREAM-INF signals next line is variant manifest URI
-    if (trimmed.startsWith("#EXT-X-STREAM-INF")) {
-      // rewrite any URI attrs inside (rare but possible – audio group etc)
-      const rewritten = rawLine.replace(/URI="([^"]+)"/g, (_m, inner: string) => {
-        const abs = resolveUrl(inner, baseUpstream);
-        const isM = isManifestUrl(abs);
-        const proxied = isM ? manifestProxy(abs) : segmentProxy(abs);
-        return `URI="${proxied}"`;
-      });
-      out.push(rewritten);
-      nextIsVariant = true;
-      continue;
-    }
-
-    if (trimmed.startsWith("#")) {
-      // Special handling for #EXT-X-KEY that may reference broken IV files
-      if (trimmed.startsWith("#EXT-X-KEY")) {
-        const uriMatch = rawLine.match(/URI="([^"]+)"/);
-        if (uriMatch) {
-          const uriVal = uriMatch[1];
-          const abs = resolveUrl(uriVal, baseUpstream);
-          if (IV_FILE_REGEX.test(abs) || IV_FILE_REGEX.test(uriVal)) {
-            // strip the broken URI, keep METHOD/IV
-            let cleaned = rawLine.replace(/,?URI="[^"]*"/, "");
-            cleaned = cleaned.replace(/,,/g, ",").replace(/:,/g, ":").replace(/,\s*$/, "").replace(/,\s*$/g, "");
-            out.push(cleaned);
-            nextIsVariant = false;
-            continue;
-          }
-        }
-      }
-
-      // Generic tag with URI="..."
-      const rewritten = rawLine.replace(/URI="([^"]+)"/g, (_m, inner: string) => {
-        const abs = resolveUrl(inner, baseUpstream);
-        const isM = isManifestUrl(abs);
-        const proxied = isM ? manifestProxy(abs) : segmentProxy(abs);
-        return `URI="${proxied}"`;
-      });
-      out.push(rewritten);
-      nextIsVariant = false;
-      continue;
-    }
-
-    // Bare URI line – could be variant manifest or segment
-    const abs = resolveUrl(trimmed, baseUpstream);
-    const isM = nextIsVariant || isManifestUrl(abs);
-    const proxied = isM ? manifestProxy(abs) : segmentProxy(abs);
-    out.push(proxied);
-    nextIsVariant = false;
-  }
-
-  return out.join("\n");
-}
-
-/** Convenience wrapper that uses Melana raw for manifests and Spadik fast for segments */
-export function rewriteManifestWithFastProxy(
-  text: string,
-  baseUpstream: string,
-  noReferrer: boolean,
-): string {
-  return rewriteManifest(
-    text,
-    baseUpstream,
-    (abs) => proxiedManifestRawUrl(abs, noReferrer),
-    (abs) => fastProxiedUrl(abs, noReferrer),
-  );
-}
-
-// ---------------------------------------------------------------------------
-// HLS.js custom pLoader that rewrites every manifest on the fly
-// ---------------------------------------------------------------------------
-
-function createRewriteLoader(noReferrer: boolean) {
-  // HLS.js DefaultConfig.loader is an XHR loader – we wrap its onSuccess
-  const BaseLoader = (Hls as any).DefaultConfig.loader;
-
-  return class PlaylistRewriteLoader extends BaseLoader {
-    constructor(config: any) {
-      super(config);
-      const originalLoad = this.load.bind(this);
-
-      this.load = (context: any, cfg: any, callbacks: any) => {
-        const manifestTypes = [
-          "manifest",
-          "level",
-          "audioTrack",
-          "subtitleTrack",
-        ];
-        if (manifestTypes.includes(context.type)) {
-          const origOnSuccess = callbacks.onSuccess;
-          callbacks.onSuccess = (
-            response: any,
-            stats: any,
-            ctx: any,
-            networkDetails: any,
-          ) => {
-            try {
-              if (typeof response.data === "string" && response.data.includes("#EXTM3U")) {
-                const proxiedUrl: string = response.url || ctx?.url || context.url;
-                const upstream =
-                  extractUpstreamUrl(proxiedUrl) || proxiedUrl;
-                // Resolve base: upstream if it looks http, otherwise try ctx
-                const baseForResolve =
-                  /^https?:\/\//i.test(upstream)
-                    ? upstream
-                    : extractUpstreamUrl(ctx?.url || "") ||
-                      ctx?.url ||
-                      upstream;
-
-                const rewritten = rewriteManifestWithFastProxy(
-                  response.data,
-                  baseForResolve,
-                  noReferrer,
-                );
-                response.data = rewritten;
-              }
-            } catch (e) {
-              console.warn("[hls] manifest rewrite failed, using original", e);
-            }
-            origOnSuccess(response, stats, ctx, networkDetails);
-          };
-        }
-
-        originalLoad(context, cfg, callbacks);
-      };
-    }
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Legacy native HLS path (Safari without MSE/MMS) – resolve master -> variants
-// ---------------------------------------------------------------------------
-
-// Note: this path exists only for browsers where hls.js cannot run. Modern
-// Safari (macOS, iPadOS 13+, iOS 17.1+) all expose MediaSource or Apple's
-// ManagedMediaSource, so hls.js is used there and this code is not reached.
-// It is kept as a best-effort fallback for legacy iPhone Safari (< 17.1),
-// which neither exposes MSE nor accepts blob: playlists, so expect it to fail.
-
-async function fetchText(url: string, signal?: AbortSignal): Promise<string> {
-  const res = await fetch(url, { signal });
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  return res.text();
-}
-
-function createBlobUrl(text: string): string {
-  const blob = new Blob([text], {
-    type: "application/vnd.apple.mpegurl",
-  });
-  return URL.createObjectURL(blob);
-}
-
-interface NativeBuildResult {
-  masterBlob: string;
-  variantBlobs: string[];
-  allBlobs: string[];
-}
-
-/**
- * Legacy fallback for Safari/WebKit builds that lack MSE/MMS (iPhone before
- * iOS 17.1, very old Safari). hls.js cannot run there and the native player
- * cannot use our custom loader, so we fetch and rewrite manifests ourselves
- * into blob URLs.
- *
- * - Master playlists: fetch each variant/audio playlist via Melana raw,
- *   rewrite their segments to fast proxy -> blob, then rewrite master to
- *   point to those blobs -> blob.
- * - Variant playlists: just rewrite segments to fast proxy -> blob.
- *
- * Caveat: iOS's native player has refused blob: HLS playlists since iOS 11
- * (MEDIA_ERR_SRC_NOT_SUPPORTED), so on iPhones this is largely a dead end.
- */
-async function buildNativeSrc(
-  melanaRawMasterUrl: string,
-  noReferrer: boolean,
-  signal?: AbortSignal,
-): Promise<NativeBuildResult> {
-  const masterText = await fetchText(melanaRawMasterUrl, signal);
-  const upstreamBase =
-    extractUpstreamUrl(melanaRawMasterUrl) || melanaRawMasterUrl;
-
-  // Not a master? Just rewrite and blob it.
-  if (!masterText.includes("#EXT-X-STREAM-INF")) {
-    const rewritten = rewriteManifestWithFastProxy(
-      masterText,
-      upstreamBase,
-      noReferrer,
-    );
-    const blob = createBlobUrl(rewritten);
-    return { masterBlob: blob, variantBlobs: [], allBlobs: [blob] };
-  }
-
-  // Master: collect variant bare URLs and any manifest URI attrs (audio groups)
-  const lines = masterText.split(/\r?\n/);
-  const variantAbsSet = new Map<string, string>(); // abs -> original trimmed
-  const manifestUriAbsSet = new Map<string, string>(); // abs -> placeholder
-  let nextIsVariant = false;
-
-  for (const rawLine of lines) {
-    const trimmed = rawLine.trim();
-    if (!trimmed) {
-      nextIsVariant = false;
-      continue;
-    }
-    if (trimmed.startsWith("#EXT-X-STREAM-INF")) {
-      nextIsVariant = true;
-      // also collect URI="...*.m3u8" inside STREAM-INF line if any
-      const re = /URI="([^"]+)"/g;
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(rawLine)) !== null) {
-        const inner = m[1];
-        const abs = resolveUrl(inner, upstreamBase);
-        if (isManifestUrl(abs)) manifestUriAbsSet.set(abs, inner);
-      }
-      continue;
-    }
-    if (trimmed.startsWith("#")) {
-      // Any URI="..." that is manifest (audio, subtitles batch) should be fetched
-      const re = /URI="([^"]+)"/g;
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(rawLine)) !== null) {
-        const inner = m[1];
-        const abs = resolveUrl(inner, upstreamBase);
-        if (isManifestUrl(abs)) manifestUriAbsSet.set(abs, inner);
-      }
-      nextIsVariant = false;
-      continue;
-    }
-    // bare line
-    if (nextIsVariant) {
-      const abs = resolveUrl(trimmed, upstreamBase);
-      variantAbsSet.set(abs, trimmed);
-    }
-    nextIsVariant = false;
-  }
-
-  const allManifestAbs = [
-    ...Array.from(variantAbsSet.keys()),
-    ...Array.from(manifestUriAbsSet.keys()),
-  ];
-  const uniqueManifestAbs = Array.from(new Set(allManifestAbs));
-
-  // Fetch all referenced manifests via Melana raw
-  const fetched = await Promise.all(
-    uniqueManifestAbs.map(async (abs) => {
-      try {
-        const proxyUrl = proxiedManifestRawUrl(abs, noReferrer);
-        const txt = await fetchText(proxyUrl, signal);
-        const rewritten = rewriteManifestWithFastProxy(txt, abs, noReferrer);
-        const blob = createBlobUrl(rewritten);
-        return { abs, blob, ok: true as const };
-      } catch {
-        return { abs, blob: null, ok: false as const };
-      }
-    }),
-  );
-
-  const absToBlob = new Map<string, string>();
-  const variantBlobs: string[] = [];
-
-  for (const item of fetched) {
-    if (item.ok && item.blob) {
-      absToBlob.set(item.abs, item.blob);
-      // Keep track of all blobs for revocation
-      variantBlobs.push(item.blob);
-    }
-  }
-
-  // Now rewrite master to point bare variant lines and URI manifests to blob URLs
-  const rewrittenMasterLines: string[] = [];
-  nextIsVariant = false;
-  for (const rawLine of lines) {
-    const trimmed = rawLine.trim();
-    if (!trimmed) {
-      rewrittenMasterLines.push(rawLine);
-      nextIsVariant = false;
-      continue;
-    }
-
-    if (trimmed.startsWith("#EXT-X-STREAM-INF")) {
-      const rewritten = rawLine.replace(/URI="([^"]+)"/g, (_m, inner: string) => {
-        const abs = resolveUrl(inner, upstreamBase);
-        const blob = absToBlob.get(abs);
-        if (blob) return `URI="${blob}"`;
-        if (isManifestUrl(abs)) {
-          // fallback to fast? Actually for audio fallback to Melana raw if fetch failed
-          return `URI="${proxiedManifestRawUrl(abs, noReferrer)}"`;
-        }
-        return `URI="${fastProxiedUrl(abs, noReferrer)}"`;
-      });
-      rewrittenMasterLines.push(rewritten);
-      nextIsVariant = true;
-      continue;
-    }
-
-    if (trimmed.startsWith("#")) {
-      if (trimmed.startsWith("#EXT-X-KEY")) {
-        const uriMatch = rawLine.match(/URI="([^"]+)"/);
-        if (uriMatch) {
-          const uriVal = uriMatch[1];
-          const abs = resolveUrl(uriVal, upstreamBase);
-          if (IV_FILE_REGEX.test(abs) || IV_FILE_REGEX.test(uriVal)) {
-            let cleaned = rawLine.replace(/,?URI="[^"]*"/, "");
-            cleaned = cleaned
-              .replace(/,,/g, ",")
-              .replace(/:,/g, ":")
-              .replace(/,\s*$/, "");
-            rewrittenMasterLines.push(cleaned);
-            nextIsVariant = false;
-            continue;
-          }
-        }
-      }
-
-      const rewritten = rawLine.replace(/URI="([^"]+)"/g, (_m, inner: string) => {
-        const abs = resolveUrl(inner, upstreamBase);
-        const blob = absToBlob.get(abs);
-        if (blob) return `URI="${blob}"`;
-        if (isManifestUrl(abs)) {
-          return `URI="${proxiedManifestRawUrl(abs, noReferrer)}"`;
-        }
-        return `URI="${fastProxiedUrl(abs, noReferrer)}"`;
-      });
-      rewrittenMasterLines.push(rewritten);
-      nextIsVariant = false;
-      continue;
-    }
-
-    // bare URI – variant manifest
-    if (nextIsVariant) {
-      const abs = resolveUrl(trimmed, upstreamBase);
-      const blob = absToBlob.get(abs);
-      if (blob) {
-        rewrittenMasterLines.push(blob);
-      } else {
-        // fetch failed – fallback to Melana raw (will still work, just slower)
-        rewrittenMasterLines.push(proxiedManifestRawUrl(abs, noReferrer));
-      }
-    } else {
-      // Should not happen in master, but handle as segment just in case
-      const abs = resolveUrl(trimmed, upstreamBase);
-      rewrittenMasterLines.push(fastProxiedUrl(abs, noReferrer));
-    }
-    nextIsVariant = false;
-  }
-
-  const rewrittenMasterText = rewrittenMasterLines.join("\n");
-  const masterBlob = createBlobUrl(rewrittenMasterText);
-
-  return {
-    masterBlob,
-    variantBlobs,
-    allBlobs: [masterBlob, ...variantBlobs],
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -429,53 +15,52 @@ async function buildNativeSrc(
 
 /**
  * Attach a VidCore HLS playlist to a `<video>` element with cross-browser
- * support, using the "raw + fast proxy" optimization.
+ * support.
  *
- * Flow:
- * 1. Master URL is always requested via Melana with `raw=true` – this keeps
- *    VidFast WAF/bypass logic on the server but returns untouched URLs.
- * 2. A custom pLoader rewrites every manifest on the fly:
- *    - variant/audio .m3u8 -> Melana raw=true (still needs bypass)
- *    - segments/keys/subtitles -> Spadik fast proxy (edge, fast)
+ * The master playlist is fetched through the stream proxy with
+ * `proxy=<fast edge base>`: the server handles the VidFast WAF bypass and
+ * rewrites every URL in the manifest – variants, audio playlists, segments,
+ * keys, subtitles – to the fast edge proxy automatically. No client-side
+ * manifest rewriting is needed, so hls.js runs with its default loader.
  *
  * hls.js is preferred on every browser that exposes MediaSource or Apple's
  * ManagedMediaSource — including Safari on macOS/iPadOS and iPhone/iPad on
- * iOS 17.1+. That keeps the manifest rewriting (which the native player can
- * never do) on a single, proven code path. The native blob path below is only
- * a fallback for ancient WebKit builds where hls.js cannot run.
+ * iOS 17.1+. On legacy WebKit builds where hls.js cannot run, the same
+ * server-rewritten playlist is handed straight to the native player, since
+ * every URL in it already points at the proxy.
  */
 export function attachHls(
   video: HTMLVideoElement,
   playlistUrl: string,
   noReferrer: boolean,
-  signal?: AbortSignal,
 ): HlsAttachment | null {
-  // Always fetch manifests via Melana raw – fastest if we re-wrap segments
+  // If the stream service already handed us a proxied URL, unwrap it first so
+  // we never wrap a proxy URL in the proxy again.
   let upstreamForProxy: string;
   if (isProxiedStreamUrl(playlistUrl)) {
     upstreamForProxy = extractUpstreamUrl(playlistUrl) || playlistUrl;
   } else {
     upstreamForProxy = playlistUrl;
   }
-  const sourceUrl = proxiedManifestRawUrl(upstreamForProxy, noReferrer);
+  const sourceUrl = proxiedManifestUrl(upstreamForProxy, noReferrer);
 
-  // Primary path: hls.js via MSE / Managed Media Source. iOS Safari 17.1+
-  // exposes ManagedMediaSource, so this is what runs on iPhones too.
+  // Legacy WebKit builds without MSE/MMS (e.g. iPhone < iOS 17.1): hls.js
+  // cannot run, but the server-rewritten playlist is fully self-contained
+  // (every URL already points at the proxy), so the native player can consume
+  // it directly.
   if (!Hls.isSupported()) {
-    // Legacy Safari without MSE (e.g. iPhone < iOS 17.1) – native HLS is the
-    // only option, but it cannot use our custom loader, so we pre-build blobs.
-    // Note iOS's native player refuses blob: playlists (broken since iOS 11),
-    // so treat this as best-effort only.
-    if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      return attachNativeHls(video, sourceUrl, noReferrer, signal);
-    }
-    return null;
+    if (!video.canPlayType("application/vnd.apple.mpegurl")) return null;
+    video.src = sourceUrl;
+    video.load();
+    return {
+      destroy() {
+        video.removeAttribute("src");
+        video.load();
+      },
+    };
   }
 
-  const RewriteLoader = createRewriteLoader(noReferrer);
-
   const hls = new Hls({
-    pLoader: RewriteLoader as any,
     // Prefer lowest quality on cold start – small segments arrive faster
     startLevel: 0,
     startPosition: 0,
@@ -527,60 +112,6 @@ export function attachHls(
       video.removeEventListener("canplay", onCanPlay);
       video.removeEventListener("canplaythrough", onCanPlay);
       hls.destroy();
-    },
-  };
-}
-
-/**
- * Best-effort native HLS for WebKit builds where hls.js cannot run (legacy
- * iPhone Safari < iOS 17.1). Builds blob playlists with segments rewritten to
- * the fast proxy, falling back to the raw proxied manifest URL if the build
- * fails. iOS Safari's native player has rejected blob: HLS playlists since
- * iOS 11, so this path may show "not playable" regardless.
- */
-function attachNativeHls(
-  video: HTMLVideoElement,
-  sourceUrl: string,
-  noReferrer: boolean,
-  signal?: AbortSignal,
-): HlsAttachment {
-  // Build native blob(s) async – fallback to direct raw url if it fails
-  const abortCtrl = new AbortController();
-  const onExternalAbort = () => abortCtrl.abort();
-  signal?.addEventListener("abort", onExternalAbort, { once: true });
-
-  let nativeResult: NativeBuildResult | null = null;
-  let fallbackApplied = false;
-
-  void (async () => {
-    try {
-      nativeResult = await buildNativeSrc(sourceUrl, noReferrer, abortCtrl.signal);
-      if (abortCtrl.signal.aborted) return;
-      video.src = nativeResult.masterBlob;
-      // video.load() is implicit on src set but explicit for safety
-      video.load();
-    } catch (e) {
-      console.warn("[hls] native blob build failed, fallback to raw proxy", e);
-      if (!abortCtrl.signal.aborted && !fallbackApplied) {
-        fallbackApplied = true;
-        video.src = sourceUrl;
-      }
-    }
-  })();
-
-  return {
-    destroy() {
-      signal?.removeEventListener("abort", onExternalAbort);
-      abortCtrl.abort();
-      if (nativeResult) {
-        for (const b of nativeResult.allBlobs) {
-          try {
-            URL.revokeObjectURL(b);
-          } catch {}
-        }
-      }
-      video.removeAttribute("src");
-      video.load();
     },
   };
 }

@@ -94,12 +94,15 @@ export function proxiedStreamUrl(url: string, noReferrer = false): string {
 }
 
 /**
- * Melana proxy with `raw=true` – returns the upstream .m3u8 body untouched,
- * with original URLs intact. Used for manifests so we can re-wrap segments
- * through a faster proxy ourselves.
+ * Proxied manifest URL. The stream proxy fetches the upstream .m3u8 (WAF
+ * bypass) and rewrites every URL in it – variants, audio playlists, segments,
+ * keys, subtitles – to the fast edge proxy via `proxy=<base>`. The server is
+ * in proxy mode by default, so no client-side manifest rewriting is needed.
  */
-export function proxiedManifestRawUrl(url: string, noReferrer = false): string {
-  return buildProxyUrl(proxyOrigin, url, noReferrer, { raw: "true" });
+export function proxiedManifestUrl(url: string, noReferrer = false): string {
+  return buildProxyUrl(proxyOrigin, url, noReferrer, {
+    proxy: fastProxyOrigin,
+  });
 }
 
 /**
