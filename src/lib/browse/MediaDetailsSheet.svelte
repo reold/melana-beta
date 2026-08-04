@@ -131,6 +131,7 @@
   {/snippet}
 
   <div
+    data-svaul-drawer-no-drag
     class="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain"
   >
     {#if shown}
