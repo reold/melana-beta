@@ -1,5 +1,7 @@
 <script lang="ts">
   import { browser } from "$app/environment";
+  import { afterNavigate, goto } from "$app/navigation";
+  import { resolve } from "$app/paths";
   import ContourTexture from "$lib/assets/contour-texture.png";
 
   interface CommitInfo {
@@ -120,6 +122,22 @@
     return rest || null;
   }
 
+  // Stepping back through history (instead of pushing a fresh /browse entry)
+  // is what lets Browse restore the exact list, sheet and scroll the user
+  // left. Only safe when we know the previous entry is Browse.
+  let cameFromBrowse = $state(false);
+  afterNavigate((navigation) => {
+    cameFromBrowse = navigation.from?.route.id === "/browse";
+  });
+
+  function leaveToBrowse() {
+    if (cameFromBrowse) {
+      history.back();
+      return;
+    }
+    void goto(resolve("/browse"));
+  }
+
   function formatDateTime(iso: string): string {
     return new Intl.DateTimeFormat(undefined, {
       dateStyle: "medium",
@@ -161,9 +179,21 @@
       style="mask-image: url({ContourTexture});"
     ></div>
     <div class="texture-fade" aria-hidden="true"></div>
-    <h1 class="relative z-10 text-5xl font-extrabold leading-none tracking-tight">
-      Settings
-    </h1>
+    <div class="relative z-10 flex items-center gap-1">
+      <button
+        type="button"
+        class="inline-flex items-center rounded-lg p-2 text-app-secondary-label hover:bg-apple-white/10 hover:text-app-label"
+        onclick={leaveToBrowse}
+        aria-label="Back to browse"
+      >
+        <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
+        </svg>
+      </button>
+      <h1 class="text-5xl font-extrabold leading-none tracking-tight">
+        Settings
+      </h1>
+    </div>
   </header>
 
   <div class="px-4 pb-10 sm:px-8">
