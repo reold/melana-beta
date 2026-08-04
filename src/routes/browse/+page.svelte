@@ -235,8 +235,8 @@
 >
   <header class="relative overflow-hidden px-5 pb-4 pt-10">
     <div
-      class="pointer-events-none absolute inset-0 bg-cover bg-center opacity-25"
-      style="background-image: url({ContourTexture});"
+      class="pointer-events-none absolute inset-0 mask-cover mask-center bg-linear-to-b from-apple-aqua from-80% to-black opacity-50"
+      style="mask-image: url({ContourTexture});"
     ></div>
     <div class="texture-fade" aria-hidden="true"></div>
     <h1

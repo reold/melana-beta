@@ -5,6 +5,7 @@
   import { page } from "$app/state";
   import { getStream, fastProxiedUrl, type StreamSource, type GetStreamResult } from "$lib/streaming/client";
   import { attachHls } from "$lib/streaming/hls";
+  import Dropdown, { type DropdownOption } from "$lib/common/Dropdown.svelte";
   import { fetchMediaDetails, tmdbPosterUrl } from "$lib/tmdb/client";
   import type { MediaDetails, MediaSummary, MediaType } from "$lib/tmdb/types";
   import { parseSubtitles, type SubtitleCue } from "$lib/subtitles/parser";
@@ -99,6 +100,49 @@
   const allTracks = $derived.by((): UnifiedTrack[] => {
     return [...vidcoreTracks, ...osTracks];
   });
+
+  // Dropdown option lists (label ≠ value so the shared component can render
+  // pretty names while the underlying state stays a code / id / number).
+  const serverOptions = $derived.by((): DropdownOption[] =>
+    (streamResult?.streams ?? []).map((s) => ({
+      label: s.server.name,
+      value: s.server.name,
+    })),
+  );
+
+  const seasonOptions = $derived.by((): DropdownOption[] => {
+    if (seasons.length === 0) return [{ label: "S1", value: "1" }];
+    return seasons.map((item) => ({
+      label: item.name || `S${item.seasonNumber}`,
+      value: String(item.seasonNumber),
+    }));
+  });
+
+  const episodeOptions = $derived.by((): DropdownOption[] =>
+    Array.from({ length: episodeCount }, (_, i) => i + 1).map((n) => ({
+      label: `E${n}`,
+      value: String(n),
+    })),
+  );
+
+  const subtitleOptions = $derived.by((): DropdownOption[] => [
+    { label: "Subtitles off", value: "" },
+    ...allTracks.map((t) => ({
+      label: `${t.label}${t.source === "opensubtitles" ? " (OS)" : ""}`,
+      value: t.id,
+    })),
+  ]);
+
+  const languageOptions = $derived.by((): DropdownOption[] =>
+    SUBTITLE_LANGUAGES.map((l) => ({ label: l.label, value: l.code })),
+  );
+
+  const osResultOptions = $derived.by((): DropdownOption[] =>
+    osResults.map((r) => ({
+      label: `${truncateMiddle(r.release, 64)} (${r.downloads.toLocaleString()} ↓)`,
+      value: r.id,
+    })),
+  );
 
   let selectedTrackId = $state<string | null>(null);
   let subtitleDelay = $state(0);
@@ -570,46 +614,28 @@
                 <svg class="h-4 w-4 shrink-0 text-app-secondary-label" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 0 1-3-3m3 3a3 3 0 1 0 0 6h13.5a3 3 0 1 0 0-6m-16.5-3a3 3 0 0 1 3-3h13.5a3 3 0 0 1 3 3m-19.5 0a4.5 4.5 0 0 1 .9-2.7L5.737 5.1a3.375 3.375 0 0 1 2.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 0 1 .9 2.7m0 0a3 3 0 0 1-3 3m0 3h.008v.008h-.008v-.008Zm0-6h.008v.008h-.008v-.008Zm-3 6h.008v.008h-.008v-.008Zm0-6h.008v.008h-.008v-.008Z" />
                 </svg>
-                <select
+                <Dropdown
+                  options={serverOptions}
                   value={selectedServerName}
-                  onchange={(event) => { selectedServerName = event.currentTarget.value; }}
-                  class="rounded-[10px] border border-app-separator bg-app-surface px-3 py-1.5 text-sm font-semibold outline-none focus:border-apple-green"
-                >
-                  {#each streamResult.streams as s}
-                    <option value={s.server.name}>{s.server.name}</option>
-                  {/each}
-                </select>
+                  onChange={(name) => (selectedServerName = name)}
+                />
               </div>
 
               <!-- Season / Episode (TV only) -->
               {#if mediaType === "tv"}
                 <span class="h-5 w-px bg-app-separator" aria-hidden="true"></span>
 
-                <select
-                  value={season}
-                  onchange={(event) => selectSeason(Number(event.currentTarget.value))}
-                  class="rounded-[10px] border border-app-separator bg-app-surface px-3 py-1.5 text-sm font-semibold outline-none focus:border-apple-green"
-                  aria-label="Season"
-                >
-                  {#if seasons.length}
-                    {#each seasons as item (item.seasonNumber)}
-                      <option value={item.seasonNumber}>{item.name || `S${item.seasonNumber}`}</option>
-                    {/each}
-                  {:else}
-                    <option value="1">S1</option>
-                  {/if}
-                </select>
+                <Dropdown
+                  options={seasonOptions}
+                  value={String(season)}
+                  onChange={(v) => selectSeason(Number(v))}
+                />
 
-                <select
-                  value={episode}
-                  onchange={(event) => (episode = Number(event.currentTarget.value))}
-                  class="rounded-[10px] border border-app-separator bg-app-surface px-3 py-1.5 text-sm font-semibold outline-none focus:border-apple-green"
-                  aria-label="Episode"
-                >
-                  {#each Array.from({ length: episodeCount }, (_, i) => i + 1) as number}
-                    <option value={number}>E{number}</option>
-                  {/each}
-                </select>
+                <Dropdown
+                  options={episodeOptions}
+                  value={String(episode)}
+                  onChange={(v) => (episode = Number(v))}
+                />
 
                 {#if detailsLoading}
                   <span class="text-xs text-app-secondary-label">Loading…</span>
@@ -628,18 +654,12 @@
               <svg class="h-4 w-4 shrink-0 text-app-secondary-label" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
               </svg>
-              <select
+              <Dropdown
+                options={subtitleOptions}
                 value={selectedTrackId ?? ""}
-                onchange={(event) => { selectedTrackId = event.currentTarget.value || null; }}
-                class="max-w-[16rem] rounded-[10px] border border-app-separator bg-app-surface px-3 py-1.5 text-sm font-semibold outline-none focus:border-apple-green"
-              >
-                <option value="">Subtitles off</option>
-                {#each allTracks as track (track.id)}
-                  <option value={track.id}>
-                    {track.label}{#if track.source === "opensubtitles"} (OS){/if}
-                  </option>
-                {/each}
-              </select>
+                onChange={(v) => (selectedTrackId = v || null)}
+                triggerLabelClass="max-w-[16rem]"
+              />
             </div>
 
             <!-- Delay controls (shown when subtitle active) -->
@@ -707,24 +727,20 @@
             {#if osExpanded}
               <div class="mt-2 space-y-3 border-t border-app-separator pt-3">
                 <div class="flex flex-wrap items-center gap-3">
-                  <select
-                    bind:value={osLanguage}
-                    class="rounded-[10px] border border-app-separator bg-app-surface px-3 py-1.5 text-sm font-semibold outline-none focus:border-apple-green"
-                    aria-label="Subtitle language"
-                  >
-                    {#each SUBTITLE_LANGUAGES as lang}
-                      <option value={lang.code}>{lang.label}</option>
-                    {/each}
-                  </select>
+                  <Dropdown
+                    options={languageOptions}
+                    value={osLanguage}
+                    onChange={(code) => (osLanguage = code)}
+                  />
 
                   <button
                     type="button"
-                    class="inline-flex items-center gap-2 rounded-[10px] border border-apple-green/40 bg-apple-green/10 px-3 py-1.5 text-sm font-semibold text-apple-green transition-colors hover:bg-apple-green/20 disabled:opacity-50"
+                    class="inline-flex items-center gap-2 rounded-[10px] border border-apple-blue/40 bg-apple-blue/15 px-3 py-1.5 text-sm font-semibold text-apple-blue transition-colors hover:bg-apple-blue/25 disabled:opacity-50"
                     onclick={searchOpenSubtitles}
                     disabled={osSearching || !isOpenSubtitlesConfigured()}
                   >
                     {#if osSearching}
-                      <span class="h-4 w-4 animate-spin rounded-full border-2 border-apple-green border-t-transparent"></span>
+                      <span class="h-4 w-4 animate-spin rounded-full border-2 border-apple-blue border-t-transparent"></span>
                     {/if}
                     {osSearching ? "Searching…" : "Search"}
                   </button>
@@ -739,20 +755,16 @@
                 {/if}
 
                 {#if osResults.length > 1}
-                  <select
+                  <Dropdown
+                    options={osResultOptions}
                     value={osSelectedResult?.id ?? ""}
-                    onchange={(event) => {
-                      const result = osResults.find((r) => r.id === event.currentTarget.value);
+                    onChange={(id) => {
+                      const result = osResults.find((r) => r.id === id);
                       if (result) selectOsResult(result);
                     }}
-                    class="w-full rounded-[10px] border border-app-separator bg-app-surface px-3 py-1.5 text-sm font-semibold outline-none focus:border-apple-green"
-                  >
-                    {#each osResults as result (result.id)}
-                      <option value={result.id}>
-                        {truncateMiddle(result.release, 64)} ({result.downloads.toLocaleString()} ↓)
-                      </option>
-                    {/each}
-                  </select>
+                    stretch
+                    triggerLabelClass="max-w-full"
+                  />
                 {:else if osResults.length === 1}
                   <p class="text-xs text-app-secondary-label">
                     {osResults[0].release} · {osResults[0].downloads.toLocaleString()} downloads

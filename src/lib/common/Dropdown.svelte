@@ -2,21 +2,41 @@
   import type { Snippet } from "svelte";
   import { portal } from "./portal";
 
+  export type DropdownOption = string | { label: string; value: string };
+
   interface Props {
-    options: string[];
+    options: DropdownOption[];
     value?: string;
     label?: string;
     /** Optional leading content rendered inside the trigger button. */
     triggerIcon?: Snippet;
     onChange?: (value: string) => void;
+    /** When true the trigger stretches to fill its row (for full-width menus). */
+    stretch?: boolean;
+    /** Extra classes applied to the trigger's label text (e.g. truncation limits). */
+    triggerLabelClass?: string;
   }
+
+  function optionLabel(option: DropdownOption): string {
+    return typeof option === "string" ? option : option.label;
+  }
+  function optionValue(option: DropdownOption): string {
+    return typeof option === "string" ? option : option.value;
+  }
+
+  const displayLabel = $derived.by(() => {
+    const match = options.find((o) => optionValue(o) === value);
+    return match ? optionLabel(match) : value;
+  });
 
   let {
     options,
-    value = $bindable(options[0]),
+    value = $bindable(options[0] !== undefined ? optionValue(options[0]) : ""),
     label = "",
     triggerIcon,
     onChange = () => {},
+    stretch = false,
+    triggerLabelClass = "",
   }: Props = $props();
 
   /** Distance between trigger and menu, and the minimum gap to a viewport edge. */
@@ -69,9 +89,10 @@
     if (open) positionMenu();
   }
 
-  function select(option: string) {
-    value = option;
-    onChange(option);
+  function select(option: DropdownOption) {
+    const next = optionValue(option);
+    value = next;
+    onChange(next);
     open = false;
   }
 
@@ -129,7 +150,7 @@
 
 <div
   bind:this={anchorEl}
-  class="relative inline-flex shrink-0 items-center gap-2"
+  class="relative inline-flex shrink-0 items-center gap-2 {stretch ? 'w-full' : ''}"
 >
   {#if label}
     <span class="text-sm font-semibold text-app-label">{label}</span>
@@ -138,7 +159,9 @@
   <button
     bind:this={triggerEl}
     type="button"
-    class="inline-flex items-center gap-1 rounded-[10px] border border-app-separator bg-app-surface px-3 py-1 text-sm font-semibold text-app-label transition-colors hover:bg-app-surface-hover"
+    class="inline-flex items-center gap-1 rounded-[10px] border border-app-separator bg-app-surface px-3 py-1 text-sm font-semibold text-app-label transition-colors hover:bg-app-surface-hover {stretch
+      ? 'w-full justify-between'
+      : ''}"
     onclick={toggleOpen}
     aria-haspopup="listbox"
     aria-expanded={open}
@@ -146,7 +169,7 @@
     {#if triggerIcon}
       {@render triggerIcon()}
     {/if}
-    {value}
+    <span class="min-w-0 truncate {triggerLabelClass}">{displayLabel}</span>
     <svg
       class="h-3.5 w-3.5 shrink-0 transition-transform duration-200"
       class:rotate-180={open}
@@ -172,18 +195,18 @@
     role="listbox"
     aria-label={label || "Options"}
   >
-    {#each options as option (option)}
+    {#each options as option (optionValue(option))}
       <li role="presentation">
         <button
           type="button"
           class="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm font-medium text-app-label transition-colors hover:bg-app-surface-hover"
-          class:bg-app-surface-hover={option === value}
+          class:bg-app-surface-hover={optionValue(option) === value}
           role="option"
-          aria-selected={option === value}
+          aria-selected={optionValue(option) === value}
           onclick={() => select(option)}
         >
-          {option}
-          {#if option === value}
+          {optionLabel(option)}
+          {#if optionValue(option) === value}
             <svg
               class="h-3.5 w-3.5 shrink-0 text-apple-blue"
               viewBox="0 0 24 24"
