@@ -134,7 +134,7 @@
     return () => controller.abort();
   });
 
-  // Status of the melana-rs stream proxy, fetched from its /fetch endpoint.
+  // Status of the melana-rs stream proxy, served at the proxy root.
   $effect(() => {
     if (!browser) return;
     const controller = new AbortController();
@@ -143,7 +143,7 @@
 
     void (async () => {
       try {
-        const response = await fetch(`${proxyOrigin}/fetch`, {
+        const response = await fetch(proxyOrigin, {
           signal: controller.signal,
           headers: { Accept: "application/json" },
         });
