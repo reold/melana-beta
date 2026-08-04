@@ -179,10 +179,10 @@
     {#if triggerIcon}
       {@render triggerIcon()}
     {/if}
+    <span class="min-w-0 truncate {triggerLabelClass}">{displayLabel}</span>
     {#if displayIcon}
       {@render displayIcon()}
     {/if}
-    <span class="min-w-0 truncate {triggerLabelClass}">{displayLabel}</span>
     <svg
       class="h-3.5 w-3.5 shrink-0 transition-transform duration-200"
       class:rotate-180={open}
@@ -220,10 +220,10 @@
           onclick={() => select(option)}
         >
           <span class="flex min-w-0 items-center gap-1.5">
+            <span class="truncate">{optionLabel(option)}</span>
             {#if icon}
               {@render icon()}
             {/if}
-            <span class="truncate">{optionLabel(option)}</span>
           </span>
           {#if optionValue(option) === value}
             <svg
