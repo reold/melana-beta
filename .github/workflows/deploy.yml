@@ -36,6 +36,7 @@ jobs:
         env:
           BASE_PATH: "/melana-beta"
           PUBLIC_TMDB_API_KEY: ${{ secrets.PUBLIC_TMDB_API_KEY }}
+          PUBLIC_OPENSUBTITLES_API_KEY: ${{ secrets.PUBLIC_OPENSUBTITLES_API_KEY }}
 
       - name: Upload Artifact
         uses: actions/upload-pages-artifact@v3
