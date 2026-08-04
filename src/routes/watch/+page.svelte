@@ -158,10 +158,22 @@
   $effect(() => {
     const track = selectedTrack;
     if (!track) return;
-    // Skip if cues are already loaded for this track
-    if (cuesMap[track.id] && cuesMap[track.id].length > 0) return;
+    // Skip if this track has already been fetched — even when it parsed to
+    // zero cues or failed. Guarding on "loaded, any result" (rather than
+    // "has cues") is what stops an endless refetch loop for files that come
+    // back empty.
+    if (cuesMap[track.id] !== undefined) return;
 
     const controller = new AbortController();
+
+    const storeCues = (text: string) => {
+      if (controller.signal.aborted) return;
+      cuesMap[track.id] = parseSubtitles(text);
+    };
+    const markAttempted = () => {
+      // Record a fetch was attempted so the effect doesn't hot-loop retrying.
+      if (!controller.signal.aborted) cuesMap[track.id] ??= [];
+    };
 
     if (track.source === "vidcore") {
       void fetch(track.src, { signal: controller.signal })
@@ -169,20 +181,14 @@
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.text();
         })
-        .then((text) => {
-          if (controller.signal.aborted) return;
-          cuesMap[track.id] = parseSubtitles(text);
-        })
-        .catch(() => {});
+        .then((text) => storeCues(text))
+        .catch(markAttempted);
     } else if (track.source === "opensubtitles") {
       const fileId = Number(track.src);
       if (!Number.isFinite(fileId)) return;
       void fetchSubtitleText(fileId, controller.signal)
-        .then((text) => {
-          if (controller.signal.aborted) return;
-          cuesMap[track.id] = parseSubtitles(text);
-        })
-        .catch(() => {});
+        .then((text) => storeCues(text))
+        .catch(markAttempted);
     }
 
     return () => controller.abort();
