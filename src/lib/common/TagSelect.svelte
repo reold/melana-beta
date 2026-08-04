@@ -28,7 +28,7 @@
 
 <div class="inline-flex shrink-0 flex-nowrap items-center gap-2">
   {#if label}
-    <span class="text-[15px] font-semibold text-app-label">{label}</span>
+    <span class="text-sm font-semibold text-app-label">{label}</span>
   {/if}
 
   {#each options as option (option)}
@@ -37,7 +37,7 @@
 
     <button
       type="button"
-      class="inline-flex items-center gap-1 rounded-[5px] border px-4 py-1.5 text-[15px] font-semibold transition-colors {isActive
+      class="inline-flex items-center gap-1 rounded-[5px] border px-3 py-1 text-sm font-semibold transition-colors {isActive
         ? 'border-apple-white/25 bg-app-surface text-app-label'
         : 'border-app-separator bg-app-surface/60 text-app-secondary-label hover:bg-app-surface-hover hover:text-app-label'} {isLocked
         ? 'cursor-not-allowed opacity-90'
@@ -48,7 +48,7 @@
     >
       {#if isActive}
         <svg
-          class="h-4 w-4 shrink-0"
+          class="h-3.5 w-3.5 shrink-0"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"

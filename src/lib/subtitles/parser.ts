@@ -87,8 +87,11 @@ export function parseSubtitles(content: string): SubtitleCue[] {
     if (!startStr || !endStr) continue;
 
     const start = parseTimestamp(startStr);
-    // The end timestamp may have VTT positioning after it — take only the timestamp
-    const end = parseTimestamp(endStr.split(/\s+/)[0]);
+    // The end timestamp may have VTT positioning after it — take only the
+    // timestamp. Trim first: with the standard ` --> ` (space around the
+    // arrow) the segment after "-->" begins with a leading space, so a bare
+    // whitespace-split would return "" and collapse the cue end to 0.
+    const end = parseTimestamp(endStr.trim().split(/\s+/)[0]);
     if (Number.isNaN(start) || Number.isNaN(end) || end <= start) continue;
 
     const textLines = lines.slice(timestampLineIndex + 1);
