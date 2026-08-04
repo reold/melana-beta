@@ -210,7 +210,7 @@
 </script>
 
 <svelte:head>
-  <title>Browse Melana</title>
+  <title>Browse - Melana</title>
 </svelte:head>
 
 {#snippet sortIcon()}

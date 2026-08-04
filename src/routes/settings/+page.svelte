@@ -304,29 +304,20 @@
 
   <div class="px-4 pb-10 sm:px-8">
     <div class="mx-auto max-w-6xl space-y-4">
-      <!-- Body – empty for now -->
-      <section class="rounded-2xl border border-app-separator bg-app-surface p-6">
-        <p class="text-sm text-app-secondary-label">
-          Nothing here yet — settings are coming soon.
-        </p>
-      </section>
-
       <!-- Server: live status of the melana-rs stream proxy -->
       <section class="rounded-2xl border border-app-separator bg-app-surface p-4">
         <div class="flex items-center gap-2 px-1 pb-3">
           <svg
-            class="h-4 w-4 shrink-0 text-app-secondary-label"
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
+            role="img"
             viewBox="0 0 24 24"
-            stroke-width="1.5"
-            stroke="currentColor"
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-4 w-4 shrink-0 text-app-secondary-label"
+            fill="currentColor"
             aria-hidden="true"
           >
+            <title>Render</title>
             <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              d="M5.25 14.25h13.5m-13.5 0a3 3 0 0 1-3-3m3 3a3 3 0 1 0 0 6h13.5a3 3 0 1 0 0-6m-16.5-3a3 3 0 0 1 3-3h13.5a3 3 0 0 1 3 3m-19.5 0a4.5 4.5 0 0 1 .9-2.7L5.737 5.1a3.375 3.375 0 0 1 2.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 0 1 .9 2.7m0 0a3 3 0 0 1-3 3m0 3h.008v.008h-.008v-.008Zm0-6h.008v.008h-.008v-.008Zm-3 6h.008v.008h-.008v-.008Zm0-6h.008v.008h-.008v-.008Z"
+              d="M18.263.007c-3.121-.147-5.744 2.109-6.192 5.082-.018.138-.045.272-.067.405-.696 3.703-3.936 6.507-7.827 6.507-1.388 0-2.691-.356-3.825-.979a.2024.2024 0 0 0-.302.178V24H12v-8.999c0-1.656 1.338-3 2.987-3h2.988c3.382 0 6.103-2.817 5.97-6.244-.12-3.084-2.61-5.603-5.682-5.75"
             />
           </svg>
           <h2 class="text-lg font-bold">Server</h2>
