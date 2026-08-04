@@ -83,12 +83,11 @@
   bind:open
   snapPoints={[compactSnapPoint, expandedSnapPoint]}
   bind:activeSnapPoint
-  handleOnly
   repositionInputs
   scaleBackground
   setBackgroundColorOnScale
   backgroundColor="#000000"
-  class="flex h-[94dvh] min-h-0 max-h-[94dvh] flex-col overflow-hidden rounded-t-[24px] border border-app-separator bg-app-surface text-app-label shadow-2xl"
+  class="flex h-dvh min-h-0 max-h-dvh flex-col overflow-hidden rounded-t-[24px] border border-app-separator bg-app-surface text-app-label shadow-2xl"
 >
   {#snippet overlay(props)}
     <div {...props} class="fixed inset-0 bg-black/70 backdrop-blur-sm"></div>
@@ -132,7 +131,7 @@
   {/snippet}
 
   <div
-    data-svaul-drawer-no-drag
+    {...(isExpanded ? { 'data-svaul-drawer-no-drag': true } : {})}
     class="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain"
   >
     {#if shown}
@@ -271,7 +270,7 @@
             {#if details.cast.length}
               <section class="mt-6">
                 <h3 class="text-sm font-bold">Cast</h3>
-                <div class="no-scrollbar mt-3 flex gap-3 overflow-x-auto pb-1">
+                <div class="no-scrollbar -mx-5 mt-3 flex gap-3 overflow-x-auto px-5 pb-1">
                   {#each details.cast as person (person.id)}
                     <div class="w-20 shrink-0">
                       <div
@@ -312,8 +311,7 @@
   </div>
   {#snippet footer()}
     <div
-      class="z-20 border-t border-app-separator bg-app-surface px-5 pt-3 shadow-[0_-12px_24px_rgb(0_0_0_/_0.28)]"
-      style="padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);"
+      class="safe-footer z-20 border-t border-app-separator bg-app-surface px-5 pt-3 pb-16 shadow-[0_-12px_24px_rgb(0_0_0_/_0.28)]"
     >
       <button
         type="button"
@@ -341,5 +339,9 @@
   }
   .no-scrollbar::-webkit-scrollbar {
     display: none;
+  }
+
+  .safe-footer {
+    padding-bottom: calc(4rem + env(safe-area-inset-bottom));
   }
 </style>

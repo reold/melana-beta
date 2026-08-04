@@ -37,7 +37,7 @@
 
     <button
       type="button"
-      class="rounded-[5px] border px-4 py-1.5 text-[15px] font-semibold transition-colors {isActive
+      class="inline-flex items-center gap-1 rounded-[5px] border px-4 py-1.5 text-[15px] font-semibold transition-colors {isActive
         ? 'border-apple-white/25 bg-app-surface text-app-label'
         : 'border-app-separator bg-app-surface/60 text-app-secondary-label hover:bg-app-surface-hover hover:text-app-label'} {isLocked
         ? 'cursor-not-allowed opacity-90'
@@ -46,6 +46,20 @@
       aria-disabled={isLocked}
       onclick={() => toggle(option)}
     >
+      {#if isActive}
+        <svg
+          class="h-4 w-4 shrink-0"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="3"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+      {/if}
       {option}
     </button>
   {/each}

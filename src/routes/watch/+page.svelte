@@ -8,9 +8,17 @@
   import { fetchMediaDetails, tmdbPosterUrl } from "$lib/tmdb/client";
   import type { MediaDetails, MediaSummary, MediaType } from "$lib/tmdb/types";
   import Dropdown from "$lib/common/Dropdown.svelte";
+  import SubtitleOverlay from "$lib/subtitles/SubtitleOverlay.svelte";
+  import { parseSubtitles, type SubtitleCue } from "$lib/subtitles/parser";
+  import {
+    searchSubtitles,
+    fetchSubtitleText,
+    isOpenSubtitlesConfigured,
+    SUBTITLE_LANGUAGES,
+    type OpenSubtitlesResult,
+    type OpenSubtitlesFile,
+  } from "$lib/subtitles/opensubtitles";
 
-  // Query parameters are read only in the browser because this static route is
-  // prerendered at build time, when SvelteKit deliberately disallows page.url.
   const searchParams = $derived(browser ? page.url.searchParams : new URLSearchParams());
   const typeParam = $derived(searchParams.get("type"));
   const idParam = $derived(Number(searchParams.get("id")));
@@ -34,11 +42,9 @@
     return item ? item.result : (streamResult.streams[0]?.result ?? null);
   });
 
-  let selectedSubtitleIndex = $state<number | null>(null);
   let loading = $state(false);
   let error = $state<string | null>(null);
   let video = $state<HTMLVideoElement | null>(null);
-  let subtitleTrackElement = $state<HTMLTrackElement | null>(null);
 
   const seasons = $derived(
     (details?.seasons ?? []).filter((item) => item.seasonNumber > 0),
@@ -50,22 +56,31 @@
     details ? tmdbPosterUrl(details.posterPath, "w500") : tmdbPosterUrl(posterPath, "w500"),
   );
 
-  // VidCore/Vidfast can return a very large list of sidecar subtitle files.
-  // Native <video> eagerly fetches every rendered <track> child in some browsers
-  // (notably Firefox), so keep the catalogue in JS but render no subtitle track
-  // until the user explicitly chooses one.
-  const subtitleTracks = $derived.by(() => {
+  // -------------------------------------------------------------------------
+  // Subtitle system
+  // -------------------------------------------------------------------------
+
+  interface UnifiedTrack {
+    id: string;
+    label: string;
+    source: "vidcore" | "opensubtitles";
+    src: string;
+    downloads?: number;
+  }
+
+  // Cues stored separately from tracks so mutations are reactive
+  let cuesMap = $state<Record<string, SubtitleCue[]>>({});
+
+  const vidcoreTracks = $derived.by((): UnifiedTrack[] => {
     const current = source;
     if (!current) return [];
-
     const seen = new Set<string>();
     return current.tracks
-      .map((track, sourceIndex) => ({
-        // Subtitles are small but benefit from fast edge proxy as well
-        src: fastProxiedUrl(track.file, current.noReferrer),
+      .map((track, index) => ({
+        id: `vidcore-${index}`,
         label: track.label,
-        srclang: languageCode(track.label),
-        sourceIndex,
+        source: "vidcore" as const,
+        src: fastProxiedUrl(track.file, current.noReferrer),
       }))
       .filter((track) => {
         const key = `${track.label}\u0000${track.src}`;
@@ -74,11 +89,77 @@
         return true;
       });
   });
-  const selectedSubtitleTrack = $derived(
-    selectedSubtitleIndex === null
-      ? null
-      : (subtitleTracks.find((track) => track.sourceIndex === selectedSubtitleIndex) ?? null),
+
+  let osLanguage = $state<string>("en");
+  let osResults = $state<OpenSubtitlesResult[]>([]);
+  let osSearching = $state(false);
+  let osError = $state<string | null>(null);
+  let osSelectedResult = $state<OpenSubtitlesResult | null>(null);
+  let osTracks = $state<UnifiedTrack[]>([]);
+  let osExpanded = $state(false);
+
+  const allTracks = $derived.by((): UnifiedTrack[] => {
+    return [...vidcoreTracks, ...osTracks];
+  });
+
+  let selectedTrackId = $state<string | null>(null);
+  let subtitleDelay = $state(0);
+
+  const selectedTrack = $derived(
+    allTracks.find((t) => t.id === selectedTrackId) ?? null,
   );
+
+  // Read cues from the reactive map — this is what triggers overlay updates
+  const activeCues = $derived(cuesMap[selectedTrackId ?? ""] ?? []);
+
+  // Load subtitle file when a track is selected (lazy loading)
+  $effect(() => {
+    const track = selectedTrack;
+    if (!track) return;
+    // Skip if cues are already loaded for this track
+    if (cuesMap[track.id] && cuesMap[track.id].length > 0) return;
+
+    const controller = new AbortController();
+
+    if (track.source === "vidcore") {
+      void fetch(track.src, { signal: controller.signal })
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.text();
+        })
+        .then((text) => {
+          if (controller.signal.aborted) return;
+          cuesMap[track.id] = parseSubtitles(text);
+        })
+        .catch(() => {});
+    } else if (track.source === "opensubtitles") {
+      const fileId = Number(track.src);
+      if (!Number.isFinite(fileId)) return;
+      void fetchSubtitleText(fileId, controller.signal)
+        .then((text) => {
+          if (controller.signal.aborted) return;
+          cuesMap[track.id] = parseSubtitles(text);
+        })
+        .catch(() => {});
+    }
+
+    return () => controller.abort();
+  });
+
+  $effect(() => {
+    void source;
+    osResults = [];
+    osTracks = [];
+    osSelectedResult = null;
+    osError = null;
+    selectedTrackId = null;
+    subtitleDelay = 0;
+    cuesMap = {};
+  });
+
+  // -------------------------------------------------------------------------
+  // Stream loading
+  // -------------------------------------------------------------------------
 
   function mediaSummary(): MediaSummary | null {
     if (!mediaType || !validRequest) return null;
@@ -96,8 +177,6 @@
     };
   }
 
-  // Fetch title metadata only to populate the TV season/episode chooser. Video
-  // resolution itself always comes from the user's stream proxy.
   $effect(() => {
     const media = mediaSummary();
     if (!media || media.mediaType !== "tv") {
@@ -115,7 +194,6 @@
         if (firstSeason) season = firstSeason.seasonNumber;
       })
       .catch(() => {
-        // The default S01E01 remains usable even if TMDB metadata is unavailable.
         details = null;
       })
       .finally(() => {
@@ -125,7 +203,6 @@
     return () => controller.abort();
   });
 
-  // Resolve a fresh signed stream when the requested title or TV episode changes.
   $effect(() => {
     if (!mediaType || !validRequest) return;
     const controller = new AbortController();
@@ -133,7 +210,6 @@
     error = null;
     streamResult = null;
     selectedServerName = "";
-    selectedSubtitleIndex = null;
 
     void getStream(mediaType, idParam, season, episode, controller.signal)
       .then((result) => {
@@ -144,7 +220,6 @@
         } else {
           selectedServerName = "";
         }
-        selectedSubtitleIndex = null;
       })
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) {
@@ -158,13 +233,6 @@
     return () => controller.abort();
   });
 
-  // Attach the VidCore HLS playlist to the <video> element whenever a new source
-  // resolves. hls.js handles every modern browser — including Safari on
-  // macOS/iPadOS and iPhone/iPad on iOS 17.1+, which expose (Managed) Media
-  // Source. The stream proxy rewrites the manifest (variants, segments, keys,
-  // subtitles) to the fast edge proxy server-side, so hls.js runs with its
-  // default loader and the legacy native HLS path can play the proxied
-  // playlist directly.
   $effect(() => {
     const el = video;
     const src = source;
@@ -176,166 +244,362 @@
     };
   });
 
-  // When a subtitle is selected, force its TextTrack into the visible state.
-  // This makes the custom selector work even though the browser's native track
-  // menu initially has no rendered tracks.
-  $effect(() => {
-    const track = subtitleTrackElement;
-    if (!track || !selectedSubtitleTrack) return;
-    track.track.mode = "showing";
-  });
+  // -------------------------------------------------------------------------
+  // OpenSubtitles actions
+  // -------------------------------------------------------------------------
+
+  async function searchOpenSubtitles() {
+    if (!mediaType || !validRequest) return;
+    osSearching = true;
+    osError = null;
+    osResults = [];
+    osTracks = [];
+    osSelectedResult = null;
+
+    try {
+      const results = await searchSubtitles(
+        idParam,
+        osLanguage,
+        mediaType,
+        mediaType === "tv" ? season : undefined,
+        mediaType === "tv" ? episode : undefined,
+      );
+      osResults = results;
+
+      if (results.length > 0) {
+        selectOsResult(results[0]);
+      }
+    } catch (reason: unknown) {
+      osError = reason instanceof Error ? reason.message : "Search failed.";
+    } finally {
+      osSearching = false;
+    }
+  }
+
+  function selectOsResult(result: OpenSubtitlesResult) {
+    osSelectedResult = result;
+    const bestFile = result.files.reduce((best, f) =>
+      f.downloads > best.downloads ? f : best,
+    );
+
+    const langLabel =
+      SUBTITLE_LANGUAGES.find((l) => l.code === result.language)?.label ?? result.language;
+
+    osTracks = result.files.map((file, index) => ({
+      id: `os-${result.id}-${file.id}`,
+      label: `${langLabel} · ${file.fileName}${result.files.length > 1 ? ` (${file.downloads.toLocaleString()} ↓)` : ""}`,
+      source: "opensubtitles" as const,
+      src: String(file.id),
+      downloads: file.downloads,
+    }));
+
+    if (osTracks.length > 0) {
+      const bestTrack = osTracks.find((t) => t.src === String(bestFile.id)) ?? osTracks[0];
+      selectedTrackId = bestTrack.id;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Delay controls
+  // -------------------------------------------------------------------------
+
+  function adjustDelay(delta: number) {
+    subtitleDelay = Math.round((subtitleDelay + delta) * 100) / 100;
+  }
+
+  function resetDelay() {
+    subtitleDelay = 0;
+  }
+
+  function formatDelay(seconds: number): string {
+    const sign = seconds >= 0 ? "+" : "";
+    return `${sign}${seconds.toFixed(2)}s`;
+  }
 
   function selectSeason(value: number) {
     season = value;
     episode = 1;
   }
-
-  // VidCore hands back human-readable track labels ("English", "zh-tw", …).
-  // Derive a stable, unique BCP-47-ish token so each <track> gets an srclang;
-  // the readable label is what the player actually displays.
-  function languageCode(label: string): string {
-    const code = label
-      .normalize("NFKD")
-      .replace(/[^a-zA-Z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .toLowerCase();
-    return code || "subtitle";
-  }
 </script>
 
 <svelte:head>
-  <title>{displayTitle} · Watch · Melana</title>
+  <title>{displayTitle} - Melana</title>
 </svelte:head>
 
-<main class="min-h-screen bg-app-canvas px-4 pb-10 pt-[calc(env(safe-area-inset-top)+1rem)] text-app-label sm:px-8">
-  <div class="mx-auto max-w-6xl">
-    <button
-      type="button"
-      class="mb-5 inline-flex items-center gap-2 rounded-lg px-2 py-2 text-sm font-bold text-app-secondary-label hover:bg-apple-white/10 hover:text-app-label"
-      onclick={() => goto(resolve("/browse"))}
-    >
-      <span aria-hidden="true">←</span> Back to browse
-    </button>
+<main class="min-h-screen bg-app-canvas pb-10 pt-[calc(env(safe-area-inset-top)+1rem)] text-app-label">
+  <div class="px-4 sm:px-8">
+    <div class="mx-auto max-w-6xl">
+      <button
+        type="button"
+        class="mb-5 inline-flex items-center rounded-lg p-2 text-app-secondary-label hover:bg-apple-white/10 hover:text-app-label"
+        onclick={() => goto(resolve("/browse"))}
+        aria-label="Back to browse"
+      >
+        <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
+        </svg>
+      </button>
+    </div>
+  </div>
 
-    {#if !validRequest}
-      <section class="rounded-2xl border border-apple-red/50 bg-apple-red/10 p-6">
-        <h1 class="text-xl font-bold">Invalid watch link</h1>
-        <p class="mt-2 text-app-secondary-label">Choose a title from Browse and press Play to start watching.</p>
-      </section>
-    {:else}
-      <div class="overflow-hidden rounded-2xl border border-app-separator bg-black shadow-2xl">
-        <div class="aspect-video bg-app-surface">
-          {#if loading}
-            <div class="flex h-full items-center justify-center gap-3 text-app-secondary-label" aria-live="polite">
-              <span class="h-5 w-5 animate-spin rounded-full border-2 border-app-secondary-label border-t-transparent"></span>
-              Finding a stream…
-            </div>
-          {:else if error}
-            <div class="flex h-full flex-col items-center justify-center px-6 text-center">
-              <p class="font-bold text-apple-red">Unable to load video</p>
-              <p class="mt-2 max-w-md text-sm text-app-secondary-label">{error}</p>
-            </div>
-          {:else if source}
-            <video
-              bind:this={video}
-              class="h-full w-full bg-black"
-              controls
-              playsinline
-              crossorigin="anonymous"
-              preload="auto"
-              poster={displayPoster ?? undefined}
-              aria-label={`Watch ${displayTitle}`}
-            >
-              {#if selectedSubtitleTrack}
-                {#key selectedSubtitleTrack.src}
-                  <track
-                    bind:this={subtitleTrackElement}
-                    kind="subtitles"
-                    src={selectedSubtitleTrack.src}
-                    srclang={selectedSubtitleTrack.srclang}
-                    label={selectedSubtitleTrack.label}
-                    default
-                  />
-                {/key}
-              {/if}
-              Your browser does not support HTML5 video.
-            </video>
+  {#if !validRequest}
+    <div class="px-4 sm:px-8">
+      <div class="mx-auto max-w-6xl">
+        <section class="rounded-2xl border border-apple-red/50 bg-apple-red/10 p-6">
+          <h1 class="text-xl font-bold">Invalid watch link</h1>
+          <p class="mt-2 text-app-secondary-label">Choose a title from Browse and press Play to start watching.</p>
+        </section>
+      </div>
+    </div>
+  {:else}
+    <!-- Full-width video player -->
+    <div class="relative bg-black">
+      <div class="relative aspect-video w-full bg-app-surface">
+        {#if loading}
+          <div class="flex h-full items-center justify-center gap-3 text-app-secondary-label" aria-live="polite">
+            <span class="h-5 w-5 animate-spin rounded-full border-2 border-app-secondary-label border-t-transparent"></span>
+            Finding a stream…
+          </div>
+        {:else if error}
+          <div class="flex h-full flex-col items-center justify-center px-6 text-center">
+            <p class="font-bold text-apple-red">Unable to load video</p>
+            <p class="mt-2 max-w-md text-sm text-app-secondary-label">{error}</p>
+          </div>
+        {:else if source}
+          <video
+            bind:this={video}
+            class="h-full w-full bg-black"
+            controls
+            playsinline
+            crossorigin="anonymous"
+            preload="auto"
+            poster={displayPoster ?? undefined}
+            aria-label={`Watch ${displayTitle}`}
+          >
+            Your browser does not support HTML5 video.
+          </video>
+          <SubtitleOverlay {video} cues={activeCues} delay={subtitleDelay} />
+        {/if}
+      </div>
+    </div>
+
+    <!-- Controls below player -->
+    <div class="px-4 sm:px-8">
+      <div class="mx-auto max-w-6xl">
+
+        <!-- Title row -->
+        <div class="mt-5 flex flex-wrap items-center gap-2">
+          <h1 class="text-2xl font-extrabold tracking-tight sm:text-3xl">{displayTitle}</h1>
+          {#if source?.is4k}
+            <span class="rounded-md bg-apple-green/15 px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-apple-green">4K</span>
           {/if}
         </div>
-      </div>
 
-      <div class="mt-5 flex flex-col gap-5 sm:flex-row sm:items-start">
-        {#if displayPoster}
-          <img src={displayPoster} alt="" class="hidden w-28 rounded-xl object-cover sm:block" />
+        <!-- Playback section -->
+        {#if streamResult && streamResult.streams.length > 0}
+          <div class="mt-4 rounded-xl border border-app-separator bg-app-surface/40 p-4">
+            <div class="flex flex-wrap items-center gap-3">
+              <!-- Server -->
+              <div class="flex items-center gap-2">
+                <svg class="h-4 w-4 shrink-0 text-app-secondary-label" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 0 1-3-3m3 3a3 3 0 1 0 0 6h13.5a3 3 0 1 0 0-6m-16.5-3a3 3 0 0 1 3-3h13.5a3 3 0 0 1 3 3m-19.5 0a4.5 4.5 0 0 1 .9-2.7L5.737 5.1a3.375 3.375 0 0 1 2.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 0 1 .9 2.7m0 0a3 3 0 0 1-3 3m0 3h.008v.008h-.008v-.008Zm0-6h.008v.008h-.008v-.008Zm-3 6h.008v.008h-.008v-.008Zm0-6h.008v.008h-.008v-.008Z" />
+                </svg>
+                <select
+                  value={selectedServerName}
+                  onchange={(event) => { selectedServerName = event.currentTarget.value; }}
+                  class="rounded-lg border border-app-separator bg-app-surface px-3 py-2 text-sm font-medium outline-none focus:border-apple-green"
+                >
+                  {#each streamResult.streams as s}
+                    <option value={s.server.name}>{s.server.name}</option>
+                  {/each}
+                </select>
+              </div>
+
+              <!-- Season / Episode (TV only) -->
+              {#if mediaType === "tv"}
+                <span class="h-5 w-px bg-app-separator" aria-hidden="true"></span>
+
+                <select
+                  value={season}
+                  onchange={(event) => selectSeason(Number(event.currentTarget.value))}
+                  class="rounded-lg border border-app-separator bg-app-surface px-3 py-2 text-sm font-medium outline-none focus:border-apple-green"
+                  aria-label="Season"
+                >
+                  {#if seasons.length}
+                    {#each seasons as item (item.seasonNumber)}
+                      <option value={item.seasonNumber}>{item.name || `S${item.seasonNumber}`}</option>
+                    {/each}
+                  {:else}
+                    <option value="1">S1</option>
+                  {/if}
+                </select>
+
+                <select
+                  value={episode}
+                  onchange={(event) => (episode = Number(event.currentTarget.value))}
+                  class="rounded-lg border border-app-separator bg-app-surface px-3 py-2 text-sm font-medium outline-none focus:border-apple-green"
+                  aria-label="Episode"
+                >
+                  {#each Array.from({ length: episodeCount }, (_, i) => i + 1) as number}
+                    <option value={number}>E{number}</option>
+                  {/each}
+                </select>
+
+                {#if detailsLoading}
+                  <span class="text-xs text-app-secondary-label">Loading…</span>
+                {/if}
+              {/if}
+            </div>
+          </div>
         {/if}
-        <section class="min-w-0 flex-1">
-          <p class="text-xs font-bold uppercase tracking-[0.16em] text-apple-green">{mediaType === "tv" ? "TV show" : "Movie"}</p>
-          <div class="mt-1 flex flex-wrap items-center gap-2">
-            <h1 class="text-3xl font-extrabold tracking-tight">{displayTitle}</h1>
-            {#if source?.is4k}
-              <span class="rounded-md bg-apple-green/15 px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-apple-green">4K</span>
+
+        <!-- Subtitles section -->
+        <div class="mt-3 rounded-xl border border-app-separator bg-app-surface/40 p-4">
+          <!-- Subtitle dropdown + delay row -->
+          <div class="flex flex-wrap items-center gap-3">
+            <div class="flex items-center gap-2">
+              <!-- Subtitles icon -->
+              <svg class="h-4 w-4 shrink-0 text-app-secondary-label" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
+              </svg>
+              <select
+                value={selectedTrackId ?? ""}
+                onchange={(event) => { selectedTrackId = event.currentTarget.value || null; }}
+                class="rounded-lg border border-app-separator bg-app-surface px-3 py-2 text-sm font-medium outline-none focus:border-apple-green"
+              >
+                <option value="">Subtitles off</option>
+                {#each allTracks as track (track.id)}
+                  <option value={track.id}>
+                    {track.label}{#if track.source === "opensubtitles"} (OS){/if}
+                  </option>
+                {/each}
+              </select>
+            </div>
+
+            <!-- Delay controls (shown when subtitle active) -->
+            {#if selectedTrack}
+              <span class="h-5 w-px bg-app-separator" aria-hidden="true"></span>
+              <div class="flex items-center gap-2">
+                <button
+                  type="button"
+                  class="inline-flex h-7 w-7 items-center justify-center rounded-md border border-app-separator bg-app-surface text-app-secondary-label hover:bg-app-surface-hover hover:text-app-label"
+                  onclick={() => adjustDelay(-0.25)}
+                  aria-label="Subtitles 0.25s earlier"
+                >
+                  <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  class="min-w-[4rem] rounded-md border border-app-separator bg-app-surface px-2 py-1 text-center text-xs font-semibold tabular-nums text-app-secondary-label hover:text-app-label"
+                  onclick={resetDelay}
+                  title="Click to reset"
+                >{formatDelay(subtitleDelay)}</button>
+                <button
+                  type="button"
+                  class="inline-flex h-7 w-7 items-center justify-center rounded-md border border-app-separator bg-app-surface text-app-secondary-label hover:bg-app-surface-hover hover:text-app-label"
+                  onclick={() => adjustDelay(0.25)}
+                  aria-label="Subtitles 0.25s later"
+                >
+                  <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+                  </svg>
+                </button>
+              </div>
             {/if}
           </div>
 
-          {#if streamResult && streamResult.streams.length > 0}
-            <div class="mt-5 flex flex-wrap items-center gap-4">
-              <Dropdown
-                label="Server"
-                options={streamResult.streams.map((s) => s.server.name)}
-                bind:value={selectedServerName}
-                onChange={() => {
-                  selectedSubtitleIndex = null;
-                }}
-              />
-            </div>
-          {/if}
-
-          {#if subtitleTracks.length}
-            <label class="mt-5 grid max-w-sm gap-1.5 text-sm font-semibold">
-              Subtitles
-              <select
-                value={selectedSubtitleIndex ?? ""}
-                onchange={(event) => {
-                  const value = event.currentTarget.value;
-                  selectedSubtitleIndex = value ? Number(value) : null;
-                }}
-                class="rounded-lg border border-app-separator bg-app-surface px-3 py-2.5 font-medium outline-none focus:border-apple-green"
+          <!-- OpenSubtitles collapsible -->
+          <div class="mt-3">
+            <button
+              type="button"
+              class="inline-flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm font-semibold text-app-secondary-label hover:bg-apple-white/5 hover:text-app-label"
+              onclick={() => { osExpanded = !osExpanded; }}
+            >
+              <svg class="h-4 w-4 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418" />
+              </svg>
+              <span>OpenSubtitles</span>
+              {#if osTracks.length > 0}
+                <span class="rounded-full bg-apple-green/15 px-1.5 py-0.5 text-[10px] font-bold text-apple-green">{osTracks.length}</span>
+              {/if}
+              <svg
+                class="ml-auto h-4 w-4 shrink-0 transition-transform duration-200"
+                class:rotate-180={osExpanded}
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke-width="2"
+                stroke="currentColor"
+                aria-hidden="true"
               >
-                <option value="">Off</option>
-                {#each subtitleTracks as track (track.sourceIndex)}
-                  <option value={track.sourceIndex}>{track.label}</option>
-                {/each}
-              </select>
-            </label>
-          {/if}
+                <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+              </svg>
+            </button>
 
-          {#if mediaType === "tv"}
-            <div class="mt-5 grid gap-3 sm:grid-cols-2">
-              <label class="grid gap-1.5 text-sm font-semibold">
-                Season
-                <select value={season} onchange={(event) => selectSeason(Number(event.currentTarget.value))} class="rounded-lg border border-app-separator bg-app-surface px-3 py-2.5 font-medium outline-none focus:border-apple-green">
-                  {#if seasons.length}
-                    {#each seasons as item (item.seasonNumber)}
-                      <option value={item.seasonNumber}>{item.name || `Season ${item.seasonNumber}`}</option>
+            {#if osExpanded}
+              <div class="mt-2 space-y-3 border-t border-app-separator pt-3">
+                <div class="flex flex-wrap items-center gap-3">
+                  <select
+                    bind:value={osLanguage}
+                    class="rounded-lg border border-app-separator bg-app-surface px-3 py-2 text-sm font-medium outline-none focus:border-apple-green"
+                    aria-label="Subtitle language"
+                  >
+                    {#each SUBTITLE_LANGUAGES as lang}
+                      <option value={lang.code}>{lang.label}</option>
                     {/each}
-                  {:else}
-                    <option value="1">Season 1</option>
+                  </select>
+
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-2 rounded-lg border border-apple-green/40 bg-apple-green/10 px-4 py-2 text-sm font-semibold text-apple-green transition-colors hover:bg-apple-green/20 disabled:opacity-50"
+                    onclick={searchOpenSubtitles}
+                    disabled={osSearching || !isOpenSubtitlesConfigured()}
+                  >
+                    {#if osSearching}
+                      <span class="h-4 w-4 animate-spin rounded-full border-2 border-apple-green border-t-transparent"></span>
+                    {/if}
+                    {osSearching ? "Searching…" : "Search"}
+                  </button>
+
+                  {#if !isOpenSubtitlesConfigured()}
+                    <span class="text-xs text-app-secondary-label">Set PUBLIC_OPENSUBTITLES_API_KEY</span>
                   {/if}
-                </select>
-              </label>
-              <label class="grid gap-1.5 text-sm font-semibold">
-                Episode
-                <select value={episode} onchange={(event) => (episode = Number(event.currentTarget.value))} class="rounded-lg border border-app-separator bg-app-surface px-3 py-2.5 font-medium outline-none focus:border-apple-green">
-                  {#each Array.from({ length: episodeCount }, (_, index) => index + 1) as number}
-                    <option value={number}>Episode {number}</option>
-                  {/each}
-                </select>
-              </label>
-            </div>
-            {#if detailsLoading}<p class="mt-2 text-xs text-app-secondary-label">Loading episode information…</p>{/if}
-          {/if}
-        </section>
+                </div>
+
+                {#if osError}
+                  <p class="text-sm text-apple-red">{osError}</p>
+                {/if}
+
+                {#if osResults.length > 1}
+                  <select
+                    value={osSelectedResult?.id ?? ""}
+                    onchange={(event) => {
+                      const result = osResults.find((r) => r.id === event.currentTarget.value);
+                      if (result) selectOsResult(result);
+                    }}
+                    class="w-full rounded-lg border border-app-separator bg-app-surface px-3 py-2.5 text-sm font-medium outline-none focus:border-apple-green"
+                  >
+                    {#each osResults as result (result.id)}
+                      <option value={result.id}>
+                        {result.release} ({result.downloads.toLocaleString()} ↓)
+                      </option>
+                    {/each}
+                  </select>
+                {:else if osResults.length === 1}
+                  <p class="text-xs text-app-secondary-label">
+                    {osResults[0].release} · {osResults[0].downloads.toLocaleString()} downloads
+                  </p>
+                {:else if !osSearching && !osError && osTracks.length === 0}
+                  <p class="text-xs text-app-secondary-label">No results yet. Pick a language and search.</p>
+                {/if}
+              </div>
+            {/if}
+          </div>
+        </div>
+
       </div>
-    {/if}
-  </div>
+    </div>
+  {/if}
 </main>
