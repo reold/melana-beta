@@ -46,7 +46,6 @@
       aria-disabled={isLocked}
       onclick={() => toggle(option)}
     >
-      {option}
       {#if isActive}
         <svg
           class="h-4 w-4 shrink-0"
@@ -61,6 +60,7 @@
           <polyline points="20 6 9 17 4 12" />
         </svg>
       {/if}
+      {option}
     </button>
   {/each}
 </div>
