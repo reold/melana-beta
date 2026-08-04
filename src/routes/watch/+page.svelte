@@ -8,6 +8,16 @@
   import { fetchMediaDetails, tmdbPosterUrl } from "$lib/tmdb/client";
   import type { MediaDetails, MediaSummary, MediaType } from "$lib/tmdb/types";
   import Dropdown from "$lib/common/Dropdown.svelte";
+  import SubtitleOverlay from "$lib/subtitles/SubtitleOverlay.svelte";
+  import { parseSubtitles, type SubtitleCue } from "$lib/subtitles/parser";
+  import {
+    searchSubtitles,
+    fetchSubtitleText,
+    isOpenSubtitlesConfigured,
+    SUBTITLE_LANGUAGES,
+    type OpenSubtitlesResult,
+    type OpenSubtitlesFile,
+  } from "$lib/subtitles/opensubtitles";
 
   // Query parameters are read only in the browser because this static route is
   // prerendered at build time, when SvelteKit deliberately disallows page.url.
@@ -34,11 +44,9 @@
     return item ? item.result : (streamResult.streams[0]?.result ?? null);
   });
 
-  let selectedSubtitleIndex = $state<number | null>(null);
   let loading = $state(false);
   let error = $state<string | null>(null);
   let video = $state<HTMLVideoElement | null>(null);
-  let subtitleTrackElement = $state<HTMLTrackElement | null>(null);
 
   const seasons = $derived(
     (details?.seasons ?? []).filter((item) => item.seasonNumber > 0),
@@ -50,22 +58,33 @@
     details ? tmdbPosterUrl(details.posterPath, "w500") : tmdbPosterUrl(posterPath, "w500"),
   );
 
-  // VidCore/Vidfast can return a very large list of sidecar subtitle files.
-  // Native <video> eagerly fetches every rendered <track> child in some browsers
-  // (notably Firefox), so keep the catalogue in JS but render no subtitle track
-  // until the user explicitly chooses one.
-  const subtitleTracks = $derived.by(() => {
+  // -------------------------------------------------------------------------
+  // Subtitle system (unified: VidCore + OpenSubtitles)
+  // -------------------------------------------------------------------------
+
+  interface UnifiedTrack {
+    id: string;
+    label: string;
+    source: "vidcore" | "opensubtitles";
+    /** For VidCore: proxied URL. For OpenSubtitles: file id (loaded on demand). */
+    src: string;
+    /** Populated after the subtitle file is fetched and parsed. */
+    cues: SubtitleCue[];
+    downloads?: number;
+  }
+
+  // VidCore tracks from the stream provider
+  const vidcoreTracks = $derived.by((): UnifiedTrack[] => {
     const current = source;
     if (!current) return [];
-
     const seen = new Set<string>();
     return current.tracks
-      .map((track, sourceIndex) => ({
-        // Subtitles are small but benefit from fast edge proxy as well
-        src: fastProxiedUrl(track.file, current.noReferrer),
+      .map((track, index) => ({
+        id: `vidcore-${index}`,
         label: track.label,
-        srclang: languageCode(track.label),
-        sourceIndex,
+        source: "vidcore" as const,
+        src: fastProxiedUrl(track.file, current.noReferrer),
+        cues: [] as SubtitleCue[],
       }))
       .filter((track) => {
         const key = `${track.label}\u0000${track.src}`;
@@ -74,11 +93,82 @@
         return true;
       });
   });
-  const selectedSubtitleTrack = $derived(
-    selectedSubtitleIndex === null
-      ? null
-      : (subtitleTracks.find((track) => track.sourceIndex === selectedSubtitleIndex) ?? null),
+
+  // OpenSubtitles state
+  let osLanguage = $state<string>("en");
+  let osResults = $state<OpenSubtitlesResult[]>([]);
+  let osSearching = $state(false);
+  let osError = $state<string | null>(null);
+  let osSelectedResult = $state<OpenSubtitlesResult | null>(null);
+  let osTracks = $state<UnifiedTrack[]>([]);
+
+  // Combined track list: VidCore first, then OpenSubtitles
+  const allTracks = $derived.by((): UnifiedTrack[] => {
+    return [...vidcoreTracks, ...osTracks];
+  });
+
+  let selectedTrackId = $state<string | null>(null);
+  let subtitleDelay = $state(0);
+
+  const selectedTrack = $derived(
+    allTracks.find((t) => t.id === selectedTrackId) ?? null,
   );
+
+  const activeCues = $derived(selectedTrack?.cues ?? []);
+
+  // Load subtitle file when a track is selected (lazy loading)
+  $effect(() => {
+    const track = selectedTrack;
+    if (!track || track.cues.length > 0) return;
+
+    const controller = new AbortController();
+
+    if (track.source === "vidcore") {
+      // Fetch from the proxied URL
+      void fetch(track.src, { signal: controller.signal })
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.text();
+        })
+        .then((text) => {
+          if (controller.signal.aborted) return;
+          track.cues = parseSubtitles(text);
+        })
+        .catch(() => {
+          // Silently fail — the track just won't show subtitles
+        });
+    } else if (track.source === "opensubtitles") {
+      // src is the file id
+      const fileId = Number(track.src);
+      if (!Number.isFinite(fileId)) return;
+      void fetchSubtitleText(fileId, controller.signal)
+        .then((text) => {
+          if (controller.signal.aborted) return;
+          track.cues = parseSubtitles(text);
+        })
+        .catch(() => {
+          // Silently fail
+        });
+    }
+
+    return () => controller.abort();
+  });
+
+  // Reset OpenSubtitles when the stream source changes
+  $effect(() => {
+    // Touch source to track changes
+    void source;
+    osResults = [];
+    osTracks = [];
+    osSelectedResult = null;
+    osError = null;
+    selectedTrackId = null;
+    subtitleDelay = 0;
+  });
+
+  // -------------------------------------------------------------------------
+  // Stream loading
+  // -------------------------------------------------------------------------
 
   function mediaSummary(): MediaSummary | null {
     if (!mediaType || !validRequest) return null;
@@ -96,8 +186,6 @@
     };
   }
 
-  // Fetch title metadata only to populate the TV season/episode chooser. Video
-  // resolution itself always comes from the user's stream proxy.
   $effect(() => {
     const media = mediaSummary();
     if (!media || media.mediaType !== "tv") {
@@ -115,7 +203,6 @@
         if (firstSeason) season = firstSeason.seasonNumber;
       })
       .catch(() => {
-        // The default S01E01 remains usable even if TMDB metadata is unavailable.
         details = null;
       })
       .finally(() => {
@@ -125,7 +212,6 @@
     return () => controller.abort();
   });
 
-  // Resolve a fresh signed stream when the requested title or TV episode changes.
   $effect(() => {
     if (!mediaType || !validRequest) return;
     const controller = new AbortController();
@@ -133,7 +219,6 @@
     error = null;
     streamResult = null;
     selectedServerName = "";
-    selectedSubtitleIndex = null;
 
     void getStream(mediaType, idParam, season, episode, controller.signal)
       .then((result) => {
@@ -144,7 +229,6 @@
         } else {
           selectedServerName = "";
         }
-        selectedSubtitleIndex = null;
       })
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) {
@@ -158,13 +242,6 @@
     return () => controller.abort();
   });
 
-  // Attach the VidCore HLS playlist to the <video> element whenever a new source
-  // resolves. hls.js handles every modern browser — including Safari on
-  // macOS/iPadOS and iPhone/iPad on iOS 17.1+, which expose (Managed) Media
-  // Source. The stream proxy rewrites the manifest (variants, segments, keys,
-  // subtitles) to the fast edge proxy server-side, so hls.js runs with its
-  // default loader and the legacy native HLS path can play the proxied
-  // playlist directly.
   $effect(() => {
     const el = video;
     const src = source;
@@ -176,30 +253,88 @@
     };
   });
 
-  // When a subtitle is selected, force its TextTrack into the visible state.
-  // This makes the custom selector work even though the browser's native track
-  // menu initially has no rendered tracks.
-  $effect(() => {
-    const track = subtitleTrackElement;
-    if (!track || !selectedSubtitleTrack) return;
-    track.track.mode = "showing";
-  });
+  // -------------------------------------------------------------------------
+  // OpenSubtitles actions
+  // -------------------------------------------------------------------------
+
+  async function searchOpenSubtitles() {
+    if (!mediaType || !validRequest) return;
+    const controller = new AbortController();
+    osSearching = true;
+    osError = null;
+    osResults = [];
+    osTracks = [];
+    osSelectedResult = null;
+
+    try {
+      const results = await searchSubtitles(
+        idParam,
+        osLanguage,
+        mediaType,
+        mediaType === "tv" ? season : undefined,
+        mediaType === "tv" ? episode : undefined,
+        controller.signal,
+      );
+      osResults = results;
+
+      // Auto-select the most downloaded result and load its best file
+      if (results.length > 0) {
+        selectOsResult(results[0]);
+      }
+    } catch (reason: unknown) {
+      osError = reason instanceof Error ? reason.message : "Search failed.";
+    } finally {
+      osSearching = false;
+    }
+  }
+
+  function selectOsResult(result: OpenSubtitlesResult) {
+    osSelectedResult = result;
+    // Pick the file with the most downloads
+    const bestFile = result.files.reduce((best, f) =>
+      f.downloads > best.downloads ? f : best,
+    );
+
+    const langLabel =
+      SUBTITLE_LANGUAGES.find((l) => l.code === result.language)?.label ?? result.language;
+
+    // Create a unified track for each file in the result
+    osTracks = result.files.map((file, index) => ({
+      id: `os-${result.id}-${file.id}`,
+      label: `${langLabel} · ${file.fileName}${result.files.length > 1 ? ` (${file.downloads.toLocaleString()} ↓)` : ""}`,
+      source: "opensubtitles" as const,
+      src: String(file.id),
+      cues: [] as SubtitleCue[],
+      downloads: file.downloads,
+    }));
+
+    // Auto-select the best file
+    if (osTracks.length > 0) {
+      const bestTrack = osTracks.find((t) => t.src === String(bestFile.id)) ?? osTracks[0];
+      selectedTrackId = bestTrack.id;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Delay controls
+  // -------------------------------------------------------------------------
+
+  function adjustDelay(delta: number) {
+    subtitleDelay = Math.round((subtitleDelay + delta) * 100) / 100;
+  }
+
+  function resetDelay() {
+    subtitleDelay = 0;
+  }
+
+  function formatDelay(seconds: number): string {
+    const sign = seconds >= 0 ? "+" : "";
+    return `${sign}${seconds.toFixed(2)}s`;
+  }
 
   function selectSeason(value: number) {
     season = value;
     episode = 1;
-  }
-
-  // VidCore hands back human-readable track labels ("English", "zh-tw", …).
-  // Derive a stable, unique BCP-47-ish token so each <track> gets an srclang;
-  // the readable label is what the player actually displays.
-  function languageCode(label: string): string {
-    const code = label
-      .normalize("NFKD")
-      .replace(/[^a-zA-Z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .toLowerCase();
-    return code || "subtitle";
   }
 </script>
 
@@ -241,8 +376,8 @@
       </div>
     </div>
   {:else}
-    <div class="bg-black">
-      <div class="aspect-video w-full bg-app-surface">
+    <div class="relative bg-black">
+      <div class="relative aspect-video w-full bg-app-surface">
         {#if loading}
           <div class="flex h-full items-center justify-center gap-3 text-app-secondary-label" aria-live="polite">
             <span class="h-5 w-5 animate-spin rounded-full border-2 border-app-secondary-label border-t-transparent"></span>
@@ -264,20 +399,13 @@
             poster={displayPoster ?? undefined}
             aria-label={`Watch ${displayTitle}`}
           >
-            {#if selectedSubtitleTrack}
-              {#key selectedSubtitleTrack.src}
-                <track
-                  bind:this={subtitleTrackElement}
-                  kind="subtitles"
-                  src={selectedSubtitleTrack.src}
-                  srclang={selectedSubtitleTrack.srclang}
-                  label={selectedSubtitleTrack.label}
-                  default
-                />
-              {/key}
-            {/if}
             Your browser does not support HTML5 video.
           </video>
+          <SubtitleOverlay
+            {video}
+            cues={activeCues}
+            delay={subtitleDelay}
+          />
         {/if}
       </div>
     </div>
@@ -303,31 +431,118 @@
                   label="Server"
                   options={streamResult.streams.map((s) => s.server.name)}
                   bind:value={selectedServerName}
-                  onChange={() => {
-                    selectedSubtitleIndex = null;
-                  }}
                 />
               </div>
             {/if}
 
-            {#if subtitleTracks.length}
-              <label class="mt-5 grid max-w-sm gap-1.5 text-sm font-semibold">
+            <!-- Subtitles section -->
+            <div class="mt-5 space-y-3">
+              <label class="grid max-w-sm gap-1.5 text-sm font-semibold">
                 Subtitles
                 <select
-                  value={selectedSubtitleIndex ?? ""}
+                  value={selectedTrackId ?? ""}
                   onchange={(event) => {
-                    const value = event.currentTarget.value;
-                    selectedSubtitleIndex = value ? Number(value) : null;
+                    selectedTrackId = event.currentTarget.value || null;
                   }}
                   class="rounded-lg border border-app-separator bg-app-surface px-3 py-2.5 font-medium outline-none focus:border-apple-green"
                 >
                   <option value="">Off</option>
-                  {#each subtitleTracks as track (track.sourceIndex)}
-                    <option value={track.sourceIndex}>{track.label}</option>
+                  {#each allTracks as track (track.id)}
+                    <option value={track.id}>
+                      {track.label}
+                      {#if track.source === "opensubtitles"} (OpenSubtitles){/if}
+                    </option>
                   {/each}
                 </select>
               </label>
-            {/if}
+
+              <!-- Delay controls (shown when a subtitle is active) -->
+              {#if selectedTrack}
+                <div class="flex items-center gap-3 text-sm">
+                  <span class="font-semibold text-app-secondary-label">Sync</span>
+                  <button
+                    type="button"
+                    class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-app-separator bg-app-surface text-sm font-bold hover:bg-app-surface-hover"
+                    onclick={() => adjustDelay(-0.25)}
+                    aria-label="Subtitles 0.25s earlier"
+                  >−</button>
+                  <button
+                    type="button"
+                    class="min-w-[4.5rem] rounded-md border border-app-separator bg-app-surface px-2 py-1 text-center text-sm font-semibold tabular-nums"
+                    onclick={resetDelay}
+                    title="Click to reset"
+                  >{formatDelay(subtitleDelay)}</button>
+                  <button
+                    type="button"
+                    class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-app-separator bg-app-surface text-sm font-bold hover:bg-app-surface-hover"
+                    onclick={() => adjustDelay(0.25)}
+                    aria-label="Subtitles 0.25s later"
+                  >+</button>
+                </div>
+              {/if}
+
+              <!-- OpenSubtitles search -->
+              <div class="flex flex-wrap items-center gap-3">
+                <select
+                  bind:value={osLanguage}
+                  class="rounded-lg border border-app-separator bg-app-surface px-3 py-2 text-sm font-medium outline-none focus:border-apple-green"
+                  aria-label="Subtitle language"
+                >
+                  {#each SUBTITLE_LANGUAGES as lang}
+                    <option value={lang.code}>{lang.label}</option>
+                  {/each}
+                </select>
+
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-2 rounded-lg border border-app-separator bg-app-surface px-4 py-2 text-sm font-semibold transition-colors hover:bg-app-surface-hover disabled:opacity-50"
+                  onclick={searchOpenSubtitles}
+                  disabled={osSearching || !isOpenSubtitlesConfigured()}
+                >
+                  {#if osSearching}
+                    <span class="h-4 w-4 animate-spin rounded-full border-2 border-app-secondary-label border-t-transparent"></span>
+                  {:else}
+                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <circle cx="11" cy="11" r="8" />
+                      <path d="m21 21-4.35-4.35" />
+                    </svg>
+                  {/if}
+                  {osSearching ? "Searching…" : "OpenSubtitles"}
+                </button>
+
+                {#if !isOpenSubtitlesConfigured()}
+                  <span class="text-xs text-app-secondary-label">Set PUBLIC_OPENSUBTITLES_API_KEY to enable</span>
+                {/if}
+              </div>
+
+              {#if osError}
+                <p class="text-sm text-apple-red">{osError}</p>
+              {/if}
+
+              {#if osResults.length > 1}
+                <label class="grid max-w-md gap-1.5 text-sm font-semibold">
+                  <span class="text-app-secondary-label">
+                    {osResults.length} results — switch release:
+                  </span>
+                  <select
+                    value={osSelectedResult?.id ?? ""}
+                    onchange={(event) => {
+                      const result = osResults.find((r) => r.id === event.currentTarget.value);
+                      if (result) selectOsResult(result);
+                    }}
+                    class="rounded-lg border border-app-separator bg-app-surface px-3 py-2.5 font-medium outline-none focus:border-apple-green"
+                  >
+                    {#each osResults as result (result.id)}
+                      <option value={result.id}>
+                        {result.release} ({result.downloads.toLocaleString()} ↓)
+                      </option>
+                    {/each}
+                  </select>
+                </label>
+              {:else if osResults.length === 0 && !osSearching && !osError && osTracks.length === 0}
+                <!-- No results yet — only show after a search has been attempted -->
+              {/if}
+            </div>
 
             {#if mediaType === "tv"}
               <div class="mt-5 grid gap-3 sm:grid-cols-2">
