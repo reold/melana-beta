@@ -87,7 +87,7 @@
   scaleBackground
   setBackgroundColorOnScale
   backgroundColor="#000000"
-  class="flex h-[94dvh] min-h-0 max-h-[94dvh] flex-col overflow-hidden rounded-t-[24px] border border-app-separator bg-app-surface text-app-label shadow-2xl"
+  class="flex h-dvh min-h-0 max-h-dvh flex-col overflow-hidden rounded-t-[24px] border border-app-separator bg-app-surface text-app-label shadow-2xl"
 >
   {#snippet overlay(props)}
     <div {...props} class="fixed inset-0 bg-black/70 backdrop-blur-sm"></div>
@@ -311,7 +311,7 @@
   </div>
   {#snippet footer()}
     <div
-      class="safe-footer z-20 border-t border-app-separator bg-app-surface px-5 pt-3 pb-6 shadow-[0_-12px_24px_rgb(0_0_0_/_0.28)]"
+      class="safe-footer z-20 border-t border-app-separator bg-app-surface px-5 pt-3 pb-16 shadow-[0_-12px_24px_rgb(0_0_0_/_0.28)]"
     >
       <button
         type="button"
@@ -342,6 +342,6 @@
   }
 
   .safe-footer {
-    padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
+    padding-bottom: calc(4rem + env(safe-area-inset-bottom));
   }
 </style>
