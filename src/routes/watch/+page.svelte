@@ -65,9 +65,11 @@
     label: string;
     source: "vidcore" | "opensubtitles";
     src: string;
-    cues: SubtitleCue[];
     downloads?: number;
   }
+
+  // Cues stored separately from tracks so mutations are reactive
+  let cuesMap = $state<Record<string, SubtitleCue[]>>({});
 
   const vidcoreTracks = $derived.by((): UnifiedTrack[] => {
     const current = source;
@@ -79,7 +81,6 @@
         label: track.label,
         source: "vidcore" as const,
         src: fastProxiedUrl(track.file, current.noReferrer),
-        cues: [] as SubtitleCue[],
       }))
       .filter((track) => {
         const key = `${track.label}\u0000${track.src}`;
@@ -108,11 +109,15 @@
     allTracks.find((t) => t.id === selectedTrackId) ?? null,
   );
 
-  const activeCues = $derived(selectedTrack?.cues ?? []);
+  // Read cues from the reactive map — this is what triggers overlay updates
+  const activeCues = $derived(cuesMap[selectedTrackId ?? ""] ?? []);
 
+  // Load subtitle file when a track is selected (lazy loading)
   $effect(() => {
     const track = selectedTrack;
-    if (!track || track.cues.length > 0) return;
+    if (!track) return;
+    // Skip if cues are already loaded for this track
+    if (cuesMap[track.id] && cuesMap[track.id].length > 0) return;
 
     const controller = new AbortController();
 
@@ -124,7 +129,7 @@
         })
         .then((text) => {
           if (controller.signal.aborted) return;
-          track.cues = parseSubtitles(text);
+          cuesMap[track.id] = parseSubtitles(text);
         })
         .catch(() => {});
     } else if (track.source === "opensubtitles") {
@@ -133,7 +138,7 @@
       void fetchSubtitleText(fileId, controller.signal)
         .then((text) => {
           if (controller.signal.aborted) return;
-          track.cues = parseSubtitles(text);
+          cuesMap[track.id] = parseSubtitles(text);
         })
         .catch(() => {});
     }
@@ -149,6 +154,7 @@
     osError = null;
     selectedTrackId = null;
     subtitleDelay = 0;
+    cuesMap = {};
   });
 
   // -------------------------------------------------------------------------
@@ -284,7 +290,6 @@
       label: `${langLabel} · ${file.fileName}${result.files.length > 1 ? ` (${file.downloads.toLocaleString()} ↓)` : ""}`,
       source: "opensubtitles" as const,
       src: String(file.id),
-      cues: [] as SubtitleCue[],
       downloads: file.downloads,
     }));
 
