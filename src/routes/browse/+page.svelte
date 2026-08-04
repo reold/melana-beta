@@ -128,6 +128,10 @@
   }
 </script>
 
+<svelte:head>
+  <title>Browse Melana</title>
+</svelte:head>
+
 {#snippet sortIcon()}
   <svg
     class="h-5 w-5 shrink-0"

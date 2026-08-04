@@ -204,138 +204,148 @@
 </script>
 
 <svelte:head>
-  <title>{displayTitle} · Watch · Melana</title>
+  <title>{displayTitle} - Melana</title>
 </svelte:head>
 
-<main class="min-h-screen bg-app-canvas px-4 pb-10 pt-[calc(env(safe-area-inset-top)+1rem)] text-app-label sm:px-8">
-  <div class="mx-auto max-w-6xl">
-    <button
-      type="button"
-      class="mb-5 inline-flex items-center gap-2 rounded-lg px-2 py-2 text-sm font-bold text-app-secondary-label hover:bg-apple-white/10 hover:text-app-label"
-      onclick={() => goto(resolve("/browse"))}
-    >
-      <span aria-hidden="true">←</span> Back to browse
-    </button>
+<main class="min-h-screen bg-app-canvas pb-10 pt-[calc(env(safe-area-inset-top)+1rem)] text-app-label">
+  <div class="px-4 sm:px-8">
+    <div class="mx-auto max-w-6xl">
+      <button
+        type="button"
+        class="mb-5 inline-flex items-center gap-2 rounded-lg px-2 py-2 text-sm font-bold text-app-secondary-label hover:bg-apple-white/10 hover:text-app-label"
+        onclick={() => goto(resolve("/browse"))}
+      >
+        <span aria-hidden="true">←</span> Back to browse
+      </button>
+    </div>
+  </div>
 
-    {#if !validRequest}
-      <section class="rounded-2xl border border-apple-red/50 bg-apple-red/10 p-6">
-        <h1 class="text-xl font-bold">Invalid watch link</h1>
-        <p class="mt-2 text-app-secondary-label">Choose a title from Browse and press Play to start watching.</p>
-      </section>
-    {:else}
-      <div class="overflow-hidden rounded-2xl border border-app-separator bg-black shadow-2xl">
-        <div class="aspect-video bg-app-surface">
-          {#if loading}
-            <div class="flex h-full items-center justify-center gap-3 text-app-secondary-label" aria-live="polite">
-              <span class="h-5 w-5 animate-spin rounded-full border-2 border-app-secondary-label border-t-transparent"></span>
-              Finding a stream…
-            </div>
-          {:else if error}
-            <div class="flex h-full flex-col items-center justify-center px-6 text-center">
-              <p class="font-bold text-apple-red">Unable to load video</p>
-              <p class="mt-2 max-w-md text-sm text-app-secondary-label">{error}</p>
-            </div>
-          {:else if source}
-            <video
-              bind:this={video}
-              class="h-full w-full bg-black"
-              controls
-              playsinline
-              crossorigin="anonymous"
-              preload="auto"
-              poster={displayPoster ?? undefined}
-              aria-label={`Watch ${displayTitle}`}
-            >
-              {#if selectedSubtitleTrack}
-                {#key selectedSubtitleTrack.src}
-                  <track
-                    bind:this={subtitleTrackElement}
-                    kind="subtitles"
-                    src={selectedSubtitleTrack.src}
-                    srclang={selectedSubtitleTrack.srclang}
-                    label={selectedSubtitleTrack.label}
-                    default
-                  />
-                {/key}
-              {/if}
-              Your browser does not support HTML5 video.
-            </video>
-          {/if}
-        </div>
+  {#if !validRequest}
+    <div class="px-4 sm:px-8">
+      <div class="mx-auto max-w-6xl">
+        <section class="rounded-2xl border border-apple-red/50 bg-apple-red/10 p-6">
+          <h1 class="text-xl font-bold">Invalid watch link</h1>
+          <p class="mt-2 text-app-secondary-label">Choose a title from Browse and press Play to start watching.</p>
+        </section>
       </div>
-
-      <div class="mt-5 flex flex-col gap-5 sm:flex-row sm:items-start">
-        {#if displayPoster}
-          <img src={displayPoster} alt="" class="hidden w-28 rounded-xl object-cover sm:block" />
-        {/if}
-        <section class="min-w-0 flex-1">
-          <p class="text-xs font-bold uppercase tracking-[0.16em] text-apple-green">{mediaType === "tv" ? "TV show" : "Movie"}</p>
-          <div class="mt-1 flex flex-wrap items-center gap-2">
-            <h1 class="text-3xl font-extrabold tracking-tight">{displayTitle}</h1>
-            {#if source?.is4k}
-              <span class="rounded-md bg-apple-green/15 px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-apple-green">4K</span>
-            {/if}
+    </div>
+  {:else}
+    <div class="bg-black">
+      <div class="aspect-video w-full bg-app-surface">
+        {#if loading}
+          <div class="flex h-full items-center justify-center gap-3 text-app-secondary-label" aria-live="polite">
+            <span class="h-5 w-5 animate-spin rounded-full border-2 border-app-secondary-label border-t-transparent"></span>
+            Finding a stream…
           </div>
+        {:else if error}
+          <div class="flex h-full flex-col items-center justify-center px-6 text-center">
+            <p class="font-bold text-apple-red">Unable to load video</p>
+            <p class="mt-2 max-w-md text-sm text-app-secondary-label">{error}</p>
+          </div>
+        {:else if source}
+          <video
+            bind:this={video}
+            class="h-full w-full bg-black"
+            controls
+            playsinline
+            crossorigin="anonymous"
+            preload="auto"
+            poster={displayPoster ?? undefined}
+            aria-label={`Watch ${displayTitle}`}
+          >
+            {#if selectedSubtitleTrack}
+              {#key selectedSubtitleTrack.src}
+                <track
+                  bind:this={subtitleTrackElement}
+                  kind="subtitles"
+                  src={selectedSubtitleTrack.src}
+                  srclang={selectedSubtitleTrack.srclang}
+                  label={selectedSubtitleTrack.label}
+                  default
+                />
+              {/key}
+            {/if}
+            Your browser does not support HTML5 video.
+          </video>
+        {/if}
+      </div>
+    </div>
 
-          {#if streamResult && streamResult.streams.length > 0}
-            <div class="mt-5 flex flex-wrap items-center gap-4">
-              <Dropdown
-                label="Server"
-                options={streamResult.streams.map((s) => s.server.name)}
-                bind:value={selectedServerName}
-                onChange={() => {
-                  selectedSubtitleIndex = null;
-                }}
-              />
+    <div class="px-4 sm:px-8">
+      <div class="mx-auto max-w-6xl">
+        <div class="mt-5 flex flex-col gap-5 sm:flex-row sm:items-start">
+          {#if displayPoster}
+            <img src={displayPoster} alt="" class="hidden w-28 rounded-xl object-cover sm:block" />
+          {/if}
+          <section class="min-w-0 flex-1">
+            <p class="text-xs font-bold uppercase tracking-[0.16em] text-apple-green">{mediaType === "tv" ? "TV show" : "Movie"}</p>
+            <div class="mt-1 flex flex-wrap items-center gap-2">
+              <h1 class="text-3xl font-extrabold tracking-tight">{displayTitle}</h1>
+              {#if source?.is4k}
+                <span class="rounded-md bg-apple-green/15 px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-apple-green">4K</span>
+              {/if}
             </div>
-          {/if}
 
-          {#if subtitleTracks.length}
-            <label class="mt-5 grid max-w-sm gap-1.5 text-sm font-semibold">
-              Subtitles
-              <select
-                value={selectedSubtitleIndex ?? ""}
-                onchange={(event) => {
-                  const value = event.currentTarget.value;
-                  selectedSubtitleIndex = value ? Number(value) : null;
-                }}
-                class="rounded-lg border border-app-separator bg-app-surface px-3 py-2.5 font-medium outline-none focus:border-apple-green"
-              >
-                <option value="">Off</option>
-                {#each subtitleTracks as track (track.sourceIndex)}
-                  <option value={track.sourceIndex}>{track.label}</option>
-                {/each}
-              </select>
-            </label>
-          {/if}
+            {#if streamResult && streamResult.streams.length > 0}
+              <div class="mt-5 flex flex-wrap items-center gap-4">
+                <Dropdown
+                  label="Server"
+                  options={streamResult.streams.map((s) => s.server.name)}
+                  bind:value={selectedServerName}
+                  onChange={() => {
+                    selectedSubtitleIndex = null;
+                  }}
+                />
+              </div>
+            {/if}
 
-          {#if mediaType === "tv"}
-            <div class="mt-5 grid gap-3 sm:grid-cols-2">
-              <label class="grid gap-1.5 text-sm font-semibold">
-                Season
-                <select value={season} onchange={(event) => selectSeason(Number(event.currentTarget.value))} class="rounded-lg border border-app-separator bg-app-surface px-3 py-2.5 font-medium outline-none focus:border-apple-green">
-                  {#if seasons.length}
-                    {#each seasons as item (item.seasonNumber)}
-                      <option value={item.seasonNumber}>{item.name || `Season ${item.seasonNumber}`}</option>
-                    {/each}
-                  {:else}
-                    <option value="1">Season 1</option>
-                  {/if}
-                </select>
-              </label>
-              <label class="grid gap-1.5 text-sm font-semibold">
-                Episode
-                <select value={episode} onchange={(event) => (episode = Number(event.currentTarget.value))} class="rounded-lg border border-app-separator bg-app-surface px-3 py-2.5 font-medium outline-none focus:border-apple-green">
-                  {#each Array.from({ length: episodeCount }, (_, index) => index + 1) as number}
-                    <option value={number}>Episode {number}</option>
+            {#if subtitleTracks.length}
+              <label class="mt-5 grid max-w-sm gap-1.5 text-sm font-semibold">
+                Subtitles
+                <select
+                  value={selectedSubtitleIndex ?? ""}
+                  onchange={(event) => {
+                    const value = event.currentTarget.value;
+                    selectedSubtitleIndex = value ? Number(value) : null;
+                  }}
+                  class="rounded-lg border border-app-separator bg-app-surface px-3 py-2.5 font-medium outline-none focus:border-apple-green"
+                >
+                  <option value="">Off</option>
+                  {#each subtitleTracks as track (track.sourceIndex)}
+                    <option value={track.sourceIndex}>{track.label}</option>
                   {/each}
                 </select>
               </label>
-            </div>
-            {#if detailsLoading}<p class="mt-2 text-xs text-app-secondary-label">Loading episode information…</p>{/if}
-          {/if}
-        </section>
+            {/if}
+
+            {#if mediaType === "tv"}
+              <div class="mt-5 grid gap-3 sm:grid-cols-2">
+                <label class="grid gap-1.5 text-sm font-semibold">
+                  Season
+                  <select value={season} onchange={(event) => selectSeason(Number(event.currentTarget.value))} class="rounded-lg border border-app-separator bg-app-surface px-3 py-2.5 font-medium outline-none focus:border-apple-green">
+                    {#if seasons.length}
+                      {#each seasons as item (item.seasonNumber)}
+                        <option value={item.seasonNumber}>{item.name || `Season ${item.seasonNumber}`}</option>
+                      {/each}
+                    {:else}
+                      <option value="1">Season 1</option>
+                    {/if}
+                  </select>
+                </label>
+                <label class="grid gap-1.5 text-sm font-semibold">
+                  Episode
+                  <select value={episode} onchange={(event) => (episode = Number(event.currentTarget.value))} class="rounded-lg border border-app-separator bg-app-surface px-3 py-2.5 font-medium outline-none focus:border-apple-green">
+                    {#each Array.from({ length: episodeCount }, (_, index) => index + 1) as number}
+                      <option value={number}>Episode {number}</option>
+                    {/each}
+                  </select>
+                </label>
+              </div>
+              {#if detailsLoading}<p class="mt-2 text-xs text-app-secondary-label">Loading episode information…</p>{/if}
+            {/if}
+          </section>
+        </div>
       </div>
-    {/if}
-  </div>
+    </div>
+  {/if}
 </main>
