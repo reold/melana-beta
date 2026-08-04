@@ -735,7 +735,7 @@
 
                   <button
                     type="button"
-                    class="inline-flex items-center gap-2 rounded-[10px] border border-apple-blue/40 bg-apple-blue/15 px-3 py-1.5 text-sm font-semibold text-apple-blue transition-colors hover:bg-apple-blue/25 disabled:opacity-50"
+                    class="inline-flex items-center gap-2 rounded-[10px] border border-apple-blue/40 bg-apple-blue/15 px-3 py-1 text-sm font-semibold text-apple-blue transition-colors hover:bg-apple-blue/25 disabled:opacity-50"
                     onclick={searchOpenSubtitles}
                     disabled={osSearching || !isOpenSubtitlesConfigured()}
                   >

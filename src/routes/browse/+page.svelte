@@ -235,7 +235,7 @@
 >
   <header class="relative overflow-hidden px-5 pb-4 pt-10">
     <div
-      class="pointer-events-none absolute inset-0 mask-cover mask-center bg-linear-to-b from-apple-aqua from-80% to-black opacity-50"
+      class="pointer-events-none absolute inset-0 mask-cover mask-center bg-linear-to-b from-apple-aqua from-80% to-black opacity-25"
       style="mask-image: url({ContourTexture});"
     ></div>
     <div class="texture-fade" aria-hidden="true"></div>
@@ -247,7 +247,7 @@
   </header>
 
   <div
-    class="no-scrollbar relative z-20 flex items-center gap-2.5 overflow-x-auto border-y border-app-separator bg-apple-white/[0.02] px-4 py-2.5"
+    class="no-scrollbar sticky top-0 z-30 flex items-center gap-2.5 overflow-x-auto border-y border-app-separator bg-app-canvas/95 px-4 py-2.5 backdrop-blur-xl"
     aria-label="Browse filters"
   >
     {#if !isSearchMode}
