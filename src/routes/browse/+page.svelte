@@ -240,7 +240,7 @@
     ></div>
     <div class="texture-fade" aria-hidden="true"></div>
     <h1
-      class="relative z-10 text-3xl font-extrabold leading-none tracking-tight"
+      class="relative z-10 text-5xl font-extrabold leading-none tracking-tight"
     >
       Browse
     </h1>
