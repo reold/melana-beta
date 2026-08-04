@@ -131,7 +131,6 @@
   {/snippet}
 
   <div
-    {...(isExpanded ? { 'data-svaul-drawer-no-drag': true } : {})}
     class="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain"
   >
     {#if shown}
