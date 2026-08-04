@@ -7,7 +7,6 @@
   import { attachHls } from "$lib/streaming/hls";
   import { fetchMediaDetails, tmdbPosterUrl } from "$lib/tmdb/client";
   import type { MediaDetails, MediaSummary, MediaType } from "$lib/tmdb/types";
-  import SubtitleOverlay from "$lib/subtitles/SubtitleOverlay.svelte";
   import { parseSubtitles, type SubtitleCue } from "$lib/subtitles/parser";
   import {
     searchSubtitles,
@@ -157,6 +156,150 @@
   });
 
   // -------------------------------------------------------------------------
+  // Subtitle injection into the player
+  // -------------------------------------------------------------------------
+  // Inject the selected subtitle file as a native text track on the <video>
+  // element. Unlike the old DOM overlay this renders with the built-in player
+  // controls (including fullscreen) and on lockscreen/Now Playing surfaces.
+  let subtitleTextTrack: TextTrack | null = null;
+
+  $effect(() => {
+    const el = video;
+    const cues = activeCues;
+    if (!el) return;
+
+    // Clear the previous injected track so cues never stack up.
+    if (subtitleTextTrack) {
+      try {
+        while (subtitleTextTrack.cues && subtitleTextTrack.cues.length > 0) {
+          subtitleTextTrack.removeCue(subtitleTextTrack.cues[0] as VTTCue);
+        }
+      } catch {}
+      subtitleTextTrack.mode = "hidden";
+      subtitleTextTrack = null;
+    }
+
+    if (!cues || cues.length === 0 || typeof VTTCue === "undefined") return;
+
+    const track = el.addTextTrack(
+      "subtitles",
+      selectedTrack?.label ?? "Subtitles",
+      "und",
+    );
+    subtitleTextTrack = track;
+    track.mode = "showing";
+
+    const shift = subtitleDelay || 0;
+    for (const cue of cues) {
+      try {
+        track.addCue(
+          new VTTCue(
+            Math.max(0, cue.start + shift),
+            Math.max(0, cue.end + shift),
+            cue.text,
+          ),
+        );
+      } catch {}
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Media Session (Now Playing / lockscreen metadata)
+  // -------------------------------------------------------------------------
+  $effect(() => {
+    if (!("mediaSession" in navigator)) return;
+    const session = navigator.mediaSession;
+
+    const artwork: MediaImage[] = [];
+    const backdrop = details?.backdropPath ?? null;
+    const backdropUrl = backdrop
+      ? tmdbPosterUrl(backdrop, "w780")
+      : null;
+    if (backdropUrl) {
+      artwork.push({ src: backdropUrl, sizes: "780x440", type: "image/jpeg" });
+    }
+    const posterUrl = displayPoster;
+    if (posterUrl) {
+      artwork.push({ src: posterUrl, sizes: "500x750", type: "image/jpeg" });
+    }
+
+    const year = details?.releaseDate?.slice(0, 4);
+    const artist =
+      (details?.creators?.length ?? 0) > 0
+        ? (details?.creators ?? []).join(", ")
+        : (details?.genres?.length ?? 0) > 0
+          ? (details?.genres ?? []).join(" · ")
+          : (year || "Melana");
+
+    try {
+      session.metadata = new MediaMetadata({
+        title: displayTitle,
+        artist,
+        album:
+          mediaType === "tv"
+            ? `Season ${season} · Episode ${episode}${year ? ` · ${year}` : ""}`
+            : (year || "Melana"),
+        artwork,
+      });
+    } catch {}
+
+    // Wire up lock-screen / hardware transport controls.
+    const handlers: Partial<Record<MediaSessionAction, MediaSessionActionHandler>> = {
+      play: () => void video?.play().catch(() => {}),
+      pause: () => video?.pause(),
+      seekbackward: () => {
+        if (video) video.currentTime = Math.max(0, video.currentTime - 10);
+      },
+      seekforward: () => {
+        if (video) {
+          video.currentTime = Math.min(video.duration || 0, video.currentTime + 10);
+        }
+      },
+    };
+    for (const action of Object.keys(handlers) as MediaSessionAction[]) {
+      const handler = handlers[action];
+      if (handler) {
+        try {
+          session.setActionHandler(action, handler);
+        } catch {}
+      }
+    }
+
+    return () => {
+      try {
+        for (const action of Object.keys(handlers) as MediaSessionAction[]) {
+          session.setActionHandler(action, null);
+        }
+      } catch {}
+    };
+  });
+
+  // Keep Now Playing seek position in sync with playback.
+  $effect(() => {
+    const el = video;
+    if (!el || !("mediaSession" in navigator)) return;
+    const target: HTMLVideoElement = el;
+
+    function updatePosition() {
+      if (!Number.isFinite(target.duration) || target.duration <= 0) return;
+      try {
+        navigator.mediaSession.setPositionState?.({
+          duration: target.duration,
+          playbackRate: target.playbackRate,
+          position: target.currentTime,
+        });
+      } catch {}
+    }
+
+    el.addEventListener("timeupdate", updatePosition);
+    el.addEventListener("durationchange", updatePosition);
+    return () => {
+      el.removeEventListener("timeupdate", updatePosition);
+      el.removeEventListener("durationchange", updatePosition);
+    };
+  });
+
+  // -------------------------------------------------------------------------
   // Stream loading
   // -------------------------------------------------------------------------
 
@@ -275,6 +418,15 @@
     }
   }
 
+  /** Truncate a long string from the middle with an ellipsis (macOS-style). */
+  function truncateMiddle(value: string, maxLength: number): string {
+    if (value.length <= maxLength) return value;
+    const keep = Math.max(1, maxLength - 1); // reserve room for the ellipsis
+    const left = Math.ceil(keep / 2);
+    const right = Math.floor(keep / 2);
+    return `${value.slice(0, left)}…${value.slice(value.length - right)}`;
+  }
+
   function selectOsResult(result: OpenSubtitlesResult) {
     osSelectedResult = result;
     const bestFile = result.files.reduce((best, f) =>
@@ -286,7 +438,7 @@
 
     osTracks = result.files.map((file, index) => ({
       id: `os-${result.id}-${file.id}`,
-      label: `${langLabel} · ${file.fileName}${result.files.length > 1 ? ` (${file.downloads.toLocaleString()} ↓)` : ""}`,
+      label: `${langLabel} · ${truncateMiddle(file.fileName, 48)}${result.files.length > 1 ? ` (${file.downloads.toLocaleString()} ↓)` : ""}`,
       source: "opensubtitles" as const,
       src: String(file.id),
       downloads: file.downloads,
@@ -393,7 +545,6 @@
           >
             Your browser does not support HTML5 video.
           </video>
-          <SubtitleOverlay {video} cues={activeCues} delay={subtitleDelay} />
         {/if}
       </div>
     </div>
@@ -404,7 +555,7 @@
 
         <!-- Title row -->
         <div class="mt-5 flex flex-wrap items-center gap-2">
-          <h1 class="text-2xl font-extrabold tracking-tight sm:text-3xl">{displayTitle}</h1>
+          <h1 class="text-2xl font-extrabold tracking-tight">{displayTitle}</h1>
           {#if source?.is4k}
             <span class="rounded-md bg-apple-green/15 px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-apple-green">4K</span>
           {/if}
@@ -412,7 +563,7 @@
 
         <!-- Playback section -->
         {#if streamResult && streamResult.streams.length > 0}
-          <div class="mt-4 rounded-xl border border-app-separator bg-app-surface/40 p-4">
+          <div class="mt-4 rounded-2xl border border-app-separator bg-app-surface p-4">
             <div class="flex flex-wrap items-center gap-3">
               <!-- Server -->
               <div class="flex items-center gap-2">
@@ -422,7 +573,7 @@
                 <select
                   value={selectedServerName}
                   onchange={(event) => { selectedServerName = event.currentTarget.value; }}
-                  class="rounded-lg border border-app-separator bg-app-surface px-3 py-2 text-sm font-medium outline-none focus:border-apple-green"
+                  class="rounded-[10px] border border-app-separator bg-app-surface px-3 py-1.5 text-sm font-semibold outline-none focus:border-apple-green"
                 >
                   {#each streamResult.streams as s}
                     <option value={s.server.name}>{s.server.name}</option>
@@ -437,7 +588,7 @@
                 <select
                   value={season}
                   onchange={(event) => selectSeason(Number(event.currentTarget.value))}
-                  class="rounded-lg border border-app-separator bg-app-surface px-3 py-2 text-sm font-medium outline-none focus:border-apple-green"
+                  class="rounded-[10px] border border-app-separator bg-app-surface px-3 py-1.5 text-sm font-semibold outline-none focus:border-apple-green"
                   aria-label="Season"
                 >
                   {#if seasons.length}
@@ -452,7 +603,7 @@
                 <select
                   value={episode}
                   onchange={(event) => (episode = Number(event.currentTarget.value))}
-                  class="rounded-lg border border-app-separator bg-app-surface px-3 py-2 text-sm font-medium outline-none focus:border-apple-green"
+                  class="rounded-[10px] border border-app-separator bg-app-surface px-3 py-1.5 text-sm font-semibold outline-none focus:border-apple-green"
                   aria-label="Episode"
                 >
                   {#each Array.from({ length: episodeCount }, (_, i) => i + 1) as number}
@@ -469,7 +620,7 @@
         {/if}
 
         <!-- Subtitles section -->
-        <div class="mt-3 rounded-xl border border-app-separator bg-app-surface/40 p-4">
+        <div class="mt-3 rounded-2xl border border-app-separator bg-app-surface p-4">
           <!-- Subtitle dropdown + delay row -->
           <div class="flex flex-wrap items-center gap-3">
             <div class="flex items-center gap-2">
@@ -480,7 +631,7 @@
               <select
                 value={selectedTrackId ?? ""}
                 onchange={(event) => { selectedTrackId = event.currentTarget.value || null; }}
-                class="rounded-lg border border-app-separator bg-app-surface px-3 py-2 text-sm font-medium outline-none focus:border-apple-green"
+                class="max-w-[16rem] rounded-[10px] border border-app-separator bg-app-surface px-3 py-1.5 text-sm font-semibold outline-none focus:border-apple-green"
               >
                 <option value="">Subtitles off</option>
                 {#each allTracks as track (track.id)}
@@ -558,7 +709,7 @@
                 <div class="flex flex-wrap items-center gap-3">
                   <select
                     bind:value={osLanguage}
-                    class="rounded-lg border border-app-separator bg-app-surface px-3 py-2 text-sm font-medium outline-none focus:border-apple-green"
+                    class="rounded-[10px] border border-app-separator bg-app-surface px-3 py-1.5 text-sm font-semibold outline-none focus:border-apple-green"
                     aria-label="Subtitle language"
                   >
                     {#each SUBTITLE_LANGUAGES as lang}
@@ -568,7 +719,7 @@
 
                   <button
                     type="button"
-                    class="inline-flex items-center gap-2 rounded-lg border border-apple-green/40 bg-apple-green/10 px-4 py-2 text-sm font-semibold text-apple-green transition-colors hover:bg-apple-green/20 disabled:opacity-50"
+                    class="inline-flex items-center gap-2 rounded-[10px] border border-apple-green/40 bg-apple-green/10 px-3 py-1.5 text-sm font-semibold text-apple-green transition-colors hover:bg-apple-green/20 disabled:opacity-50"
                     onclick={searchOpenSubtitles}
                     disabled={osSearching || !isOpenSubtitlesConfigured()}
                   >
@@ -594,11 +745,11 @@
                       const result = osResults.find((r) => r.id === event.currentTarget.value);
                       if (result) selectOsResult(result);
                     }}
-                    class="w-full rounded-lg border border-app-separator bg-app-surface px-3 py-2.5 text-sm font-medium outline-none focus:border-apple-green"
+                    class="w-full rounded-[10px] border border-app-separator bg-app-surface px-3 py-1.5 text-sm font-semibold outline-none focus:border-apple-green"
                   >
                     {#each osResults as result (result.id)}
                       <option value={result.id}>
-                        {result.release} ({result.downloads.toLocaleString()} ↓)
+                        {truncateMiddle(result.release, 64)} ({result.downloads.toLocaleString()} ↓)
                       </option>
                     {/each}
                   </select>

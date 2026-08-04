@@ -132,13 +132,13 @@
   class="relative inline-flex shrink-0 items-center gap-2"
 >
   {#if label}
-    <span class="text-[15px] font-semibold text-app-label">{label}</span>
+    <span class="text-sm font-semibold text-app-label">{label}</span>
   {/if}
 
   <button
     bind:this={triggerEl}
     type="button"
-    class="inline-flex items-center gap-1 rounded-[10px] border border-app-separator bg-app-surface px-4 py-1.5 text-[15px] font-semibold text-app-label transition-colors hover:bg-app-surface-hover"
+    class="inline-flex items-center gap-1 rounded-[10px] border border-app-separator bg-app-surface px-3 py-1 text-sm font-semibold text-app-label transition-colors hover:bg-app-surface-hover"
     onclick={toggleOpen}
     aria-haspopup="listbox"
     aria-expanded={open}
@@ -148,7 +148,7 @@
     {/if}
     {value}
     <svg
-      class="h-4 w-4 shrink-0 transition-transform duration-200"
+      class="h-3.5 w-3.5 shrink-0 transition-transform duration-200"
       class:rotate-180={open}
       viewBox="0 0 24 24"
       fill="none"
@@ -176,7 +176,7 @@
       <li role="presentation">
         <button
           type="button"
-          class="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-[15px] font-medium text-app-label transition-colors hover:bg-app-surface-hover"
+          class="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm font-medium text-app-label transition-colors hover:bg-app-surface-hover"
           class:bg-app-surface-hover={option === value}
           role="option"
           aria-selected={option === value}
@@ -185,7 +185,7 @@
           {option}
           {#if option === value}
             <svg
-              class="h-4 w-4 shrink-0 text-apple-blue"
+              class="h-3.5 w-3.5 shrink-0 text-apple-blue"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"

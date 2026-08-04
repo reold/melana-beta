@@ -45,6 +45,7 @@
   let sortBy = $state<SortOption>(restored?.sort ?? DEFAULT_SORT);
   let includeTypes = $state<string[]>(restored?.types ?? [...DEFAULT_TYPES]);
   let searchQuery = $state(restored?.query ?? "");
+  let searchOpen = $state(false);
   let searchInput = $state<HTMLInputElement | null>(null);
   let searchFocused = $state(false);
   let keyboardInset = $state(0);
@@ -191,6 +192,17 @@
     onSelect(item);
   }
 
+  function openSearch() {
+    searchOpen = true;
+    // The input is conditionally rendered, so focus it once the panel mounts.
+    window.setTimeout(() => searchInput?.focus(), 0);
+  }
+
+  function closeSearch() {
+    searchOpen = false;
+    searchInput?.blur();
+  }
+
   function clearSearch() {
     searchQuery = "";
     searchInput?.focus();
@@ -203,7 +215,7 @@
 
 {#snippet sortIcon()}
   <svg
-    class="h-5 w-5 shrink-0"
+    class="h-4 w-4 shrink-0"
     xmlns="http://www.w3.org/2000/svg"
     viewBox="0 0 24 24"
     fill="currentColor"
@@ -221,21 +233,21 @@
   data-svaul-drawer-wrapper
   class="min-h-screen bg-app-canvas text-app-label"
 >
-  <header class="relative overflow-hidden px-5 pb-5 pt-14">
+  <header class="relative overflow-hidden px-5 pb-4 pt-10">
     <div
       class="pointer-events-none absolute inset-0 bg-cover bg-center opacity-25"
       style="background-image: url({ContourTexture});"
     ></div>
     <div class="texture-fade" aria-hidden="true"></div>
     <h1
-      class="relative z-10 text-6xl font-extrabold leading-none tracking-tight"
+      class="relative z-10 text-3xl font-extrabold leading-none tracking-tight"
     >
       Browse
     </h1>
   </header>
 
   <div
-    class="no-scrollbar relative z-20 flex items-center gap-4 overflow-x-auto border-y border-app-separator bg-apple-white/[0.02] px-5 py-3"
+    class="no-scrollbar relative z-20 flex items-center gap-2.5 overflow-x-auto border-y border-app-separator bg-apple-white/[0.02] px-4 py-2.5"
     aria-label="Browse filters"
   >
     {#if !isSearchMode}
@@ -269,43 +281,90 @@
     class="fixed inset-x-0 z-40 flex items-center gap-2 px-5 transition-transform duration-150"
     style={`bottom: calc(1.5rem + env(safe-area-inset-bottom)); transform: translateY(-${keyboardInset}px);`}
   >
-    <div
-      class="flex flex-1 items-center rounded-2xl border border-apple-gray/35 bg-gradient-to-r from-app-surface/95 via-app-surface/90 to-app-surface/80 px-4 py-3 shadow-lg backdrop-blur-xl"
-    >
-      <input
-        bind:this={searchInput}
-        bind:value={searchQuery}
-        type="text"
-        inputmode="search"
-        enterkeyhint="search"
-        placeholder="Search titles..."
-        aria-label="Search titles"
-        onfocus={handleSearchFocus}
-        onblur={handleSearchBlur}
-        class="w-full bg-transparent text-[16px] font-semibold text-app-label placeholder-apple-gray-3 outline-none"
-      />
-    </div>
-
-    <button
-      type="button"
-      onclick={clearSearch}
-      aria-label="Clear search"
-      class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-apple-gray/35 bg-app-surface/90 text-app-label shadow-lg backdrop-blur-xl transition-transform active:scale-95"
-    >
-      <svg
-        class="h-5 w-5"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2.5"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        aria-hidden="true"
+    {#if searchOpen}
+      <!-- Close the panel and return to the floating search button -->
+      <button
+        type="button"
+        onclick={closeSearch}
+        aria-label="Close search"
+        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-apple-gray/35 bg-app-surface/90 text-app-label shadow-lg backdrop-blur-xl transition-transform active:scale-95"
       >
-        <line x1="18" y1="6" x2="6" y2="18" />
-        <line x1="6" y1="6" x2="18" y2="18" />
-      </svg>
-    </button>
+        <svg
+          class="h-5 w-5"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </button>
+
+      <div
+        class="flex flex-1 items-center rounded-2xl border border-apple-gray/35 bg-gradient-to-r from-app-surface/95 via-app-surface/90 to-app-surface/80 px-4 py-3 shadow-lg backdrop-blur-xl"
+      >
+        <input
+          bind:this={searchInput}
+          bind:value={searchQuery}
+          type="text"
+          inputmode="search"
+          enterkeyhint="search"
+          placeholder="Search titles..."
+          aria-label="Search titles"
+          onfocus={handleSearchFocus}
+          onblur={handleSearchBlur}
+          class="w-full bg-transparent text-[16px] font-semibold text-app-label placeholder-apple-gray-3 outline-none"
+        />
+        {#if searchQuery}
+          <button
+            type="button"
+            onclick={clearSearch}
+            aria-label="Clear search text"
+            class="ml-2 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-apple-gray/30 text-app-secondary-label transition-colors hover:bg-apple-gray/45 hover:text-app-label"
+          >
+            <svg
+              class="h-3.5 w-3.5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        {/if}
+      </div>
+    {:else}
+      <!-- Floating search button -->
+      <button
+        type="button"
+        onclick={openSearch}
+        aria-label="Open search"
+        class="ml-auto flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-apple-gray/35 bg-app-surface/90 text-app-label shadow-lg backdrop-blur-xl transition-transform active:scale-95"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+          class="h-7 w-7"
+          aria-hidden="true"
+        >
+          <path
+            fill-rule="evenodd"
+            d="M10.5 3.75a6.75 6.75 0 1 0 0 13.5 6.75 6.75 0 0 0 0-13.5ZM2.25 10.5a8.25 8.25 0 1 1 14.59 5.28l4.69 4.69a.75.75 0 1 1-1.06 1.06l-4.69-4.69A8.25 8.25 0 0 1 2.25 10.5Z"
+            clip-rule="evenodd"
+          />
+        </svg>
+      </button>
+    {/if}
   </div>
 </div>
 
