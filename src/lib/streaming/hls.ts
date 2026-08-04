@@ -90,18 +90,27 @@ export function attachHls(
     }
   });
 
+  let shouldAutoPlay = true;
+
   const tryPlay = () => {
-    if (!video.paused) return;
+    if (!shouldAutoPlay || !video.paused) return;
     void video.play().catch(() => {});
+  };
+
+  // Stop auto-play attempts once playback starts or user interacts
+  const stopAutoPlay = () => {
+    shouldAutoPlay = false;
   };
 
   hls.on(Hls.Events.MANIFEST_PARSED, tryPlay);
   hls.on(Hls.Events.LEVEL_LOADED, tryPlay);
-  hls.on(Hls.Events.FRAG_BUFFERED, tryPlay);
+  // Removed FRAG_BUFFERED - it fires continuously and was auto-resuming after pause
 
   const onCanPlay = () => tryPlay();
   video.addEventListener("canplay", onCanPlay, { once: true });
   video.addEventListener("canplaythrough", onCanPlay, { once: true });
+  video.addEventListener("play", stopAutoPlay, { once: true });
+  video.addEventListener("pause", stopAutoPlay, { once: true });
 
   if (video.readyState >= 2) {
     tryPlay();
@@ -111,6 +120,8 @@ export function attachHls(
     destroy() {
       video.removeEventListener("canplay", onCanPlay);
       video.removeEventListener("canplaythrough", onCanPlay);
+      video.removeEventListener("play", stopAutoPlay);
+      video.removeEventListener("pause", stopAutoPlay);
       hls.destroy();
     },
   };
