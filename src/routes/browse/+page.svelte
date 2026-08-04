@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { disableScrollHandling } from "$app/navigation";
+  import { resolve } from "$app/paths";
   import ContourTexture from "$lib/assets/contour-texture.png";
   import Dropdown from "$lib/common/Dropdown.svelte";
   import TagsSelect from "$lib/common/TagSelect.svelte";
@@ -26,13 +27,15 @@
   import { CatalogState } from "$lib/catalog/catalog-state.svelte";
   import { readPageScrollY, restorePageScrollY } from "$lib/state/scroll";
   import type { MediaSummary } from "$lib/tmdb/types";
+  import type { PageData } from "./$types";
 
   interface Props {
+    data: PageData;
     onSelect?: (item: MediaSummary) => void;
     onPlay?: (item: MediaSummary) => void;
   }
 
-  let { onSelect = () => {}, onPlay = () => {} }: Props = $props();
+  let { data, onSelect = () => {}, onPlay = () => {} }: Props = $props();
 
   const catalog = new CatalogState();
 
@@ -41,6 +44,19 @@
   // results, sheet and scroll — on its first frame instead of flashing
   // defaults and refetching.
   const restored = browseViewState.connect(captureViewState);
+
+  // Build-time SSG prefill (see +page.server.ts): the static page ships with
+  // the default catalog already fetched, so the first paint is instant and no
+  // client fetch is needed until the user changes filters or scrolls further.
+  // A restored history entry wins over the prefill so back-navigation keeps
+  // its exact list.
+  // svelte-ignore state_referenced_locally — `data` is a page prop that never
+  // changes; the prefill only matters on first render.
+  if (restored?.catalog) {
+    catalog.hydrate(restored.catalog);
+  } else if (data.prefill) {
+    catalog.hydrate(data.prefill);
+  }
 
   let sortBy = $state<SortOption>(restored?.sort ?? DEFAULT_SORT);
   let includeTypes = $state<string[]>(restored?.types ?? [...DEFAULT_TYPES]);
@@ -244,7 +260,7 @@
         Browse
       </h1>
       <a
-        href="/settings"
+        href={resolve("/settings")}
         class="inline-flex items-center justify-center rounded-lg p-2 text-app-secondary-label transition-colors hover:bg-apple-white/10 hover:text-app-label"
         aria-label="Settings"
         title="Settings"
