@@ -8,12 +8,11 @@
  * deliberately minimal — no caching, no retry, no auth tokens.
  */
 
+import { PUBLIC_OPENSUBTITLES_API_KEY } from "$env/static/public";
+
 const API_BASE = "https://api.opensubtitles.com/api/v1";
 
-const API_KEY =
-  typeof import.meta !== "undefined"
-    ? ((import.meta.env as any).PUBLIC_OPENSUBTITLES_API_KEY ?? "")
-    : "";
+const API_KEY = PUBLIC_OPENSUBTITLES_API_KEY ?? "";
 
 export function isOpenSubtitlesConfigured(): boolean {
   return API_KEY.length > 0;
