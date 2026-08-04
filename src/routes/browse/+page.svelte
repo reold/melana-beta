@@ -1,12 +1,31 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
+  import { disableScrollHandling } from "$app/navigation";
   import ContourTexture from "$lib/assets/contour-texture.png";
   import Dropdown from "$lib/common/Dropdown.svelte";
   import TagsSelect from "$lib/common/TagSelect.svelte";
   import VirtualPosterGrid from "$lib/browse/VirtualPosterGrid.svelte";
-  import MediaDetailsSheet from "$lib/browse/MediaDetailsSheet.svelte";
+  import MediaDetailsSheet, {
+    COMPACT_SNAP_POINT,
+    EXPANDED_SNAP_POINT,
+  } from "$lib/browse/MediaDetailsSheet.svelte";
+  import {
+    browseViewState,
+    type BrowseSnapshot,
+  } from "$lib/browse/browse-view-state";
+  import {
+    DEFAULT_SORT,
+    DEFAULT_TYPES,
+    SORT_OPTIONS,
+    TYPE_OPTIONS,
+    isTypeOption,
+    sortToBrowseSort,
+    typeToMediaType,
+    type SortOption,
+  } from "$lib/browse/filters";
   import { CatalogState } from "$lib/catalog/catalog-state.svelte";
-  import type { BrowseSort, MediaSummary, MediaType } from "$lib/tmdb/types";
+  import { readPageScrollY, restorePageScrollY } from "$lib/state/scroll";
+  import type { MediaSummary } from "$lib/tmdb/types";
 
   interface Props {
     onSelect?: (item: MediaSummary) => void;
@@ -15,38 +34,53 @@
 
   let { onSelect = () => {}, onPlay = () => {} }: Props = $props();
 
-  const sortOptions = ["Popularity", "Rating", "Date"] as const;
-  const tagOptions = ["TV Shows", "Movies"] as const;
-  const tagToMediaType: Record<(typeof tagOptions)[number], MediaType> = {
-    "TV Shows": "tv",
-    Movies: "movie",
-  };
-  const sortToBrowseSort: Record<(typeof sortOptions)[number], BrowseSort> = {
-    Popularity: "popularity",
-    Rating: "rating",
-    Date: "newest",
-  };
-
   const catalog = new CatalogState();
-  let sortBy = $state<(typeof sortOptions)[number]>("Popularity");
-  let includeTypes = $state<string[]>(["TV Shows", "Movies"]);
-  let searchQuery = $state("");
+
+  // Snapshot of this history entry, if the user is coming back to it. Read
+  // before any state is initialised so the screen renders restored — query,
+  // results, sheet and scroll — on its first frame instead of flashing
+  // defaults and refetching.
+  const restored = browseViewState.connect(captureViewState);
+
+  let sortBy = $state<SortOption>(restored?.sort ?? DEFAULT_SORT);
+  let includeTypes = $state<string[]>(restored?.types ?? [...DEFAULT_TYPES]);
+  let searchQuery = $state(restored?.query ?? "");
   let searchInput = $state<HTMLInputElement | null>(null);
   let searchFocused = $state(false);
   let keyboardInset = $state(0);
   let searchFocusScrollY = 0;
   let preserveSearchScrollUntil = 0;
-  let selectedItem = $state<MediaSummary | null>(null);
+  let selectedItem = $state<MediaSummary | null>(restored?.details.item ?? null);
+  // Opened after the scroll restore in onMount, never during initialisation.
   let detailsOpen = $state(false);
+  let detailsSnapPoint = $state<number | string>(
+    restored?.details.snapPoint === EXPANDED_SNAP_POINT
+      ? EXPANDED_SNAP_POINT
+      : COMPACT_SNAP_POINT,
+  );
+
+  if (restored?.catalog) catalog.hydrate(restored.catalog);
 
   const isSearchMode = $derived(searchQuery.trim().length > 0);
   const selectedMediaTypes = $derived(
-    includeTypes
-      .filter(
-        (tag): tag is (typeof tagOptions)[number] => tag in tagToMediaType,
-      )
-      .map((tag) => tagToMediaType[tag]),
+    includeTypes.filter(isTypeOption).map((tag) => typeToMediaType[tag]),
   );
+
+  function captureViewState(): BrowseSnapshot {
+    return {
+      query: searchQuery,
+      sort: sortBy,
+      types: includeTypes.filter(isTypeOption),
+      scrollY: readPageScrollY(),
+      details: {
+        open: detailsOpen,
+        item: selectedItem ? ($state.snapshot(selectedItem) as MediaSummary) : null,
+        snapPoint:
+          typeof detailsSnapPoint === "number" ? detailsSnapPoint : null,
+      },
+      catalog: catalog.snapshot(),
+    };
+  }
 
   // A changed query/filter/sort starts a new catalog generation. The controller
   // aborts all work from the old generation before a replacement can commit.
@@ -93,6 +127,41 @@
       viewport.removeEventListener("resize", updateKeyboardInset);
       viewport.removeEventListener("scroll", updateKeyboardInset);
     };
+  });
+
+  onMount(() => {
+    if (!restored) return;
+
+    // SvelteKit's own scroll restoration runs against the page as it is right
+    // after mount; take it over so the sheet and the grid are settled first.
+    try {
+      disableScrollHandling();
+    } catch {
+      // Only valid during a navigation — e.g. a dev HMR remount is not one.
+    }
+
+    const target = restored;
+    let frame = 0;
+
+    function settle(attempt: number) {
+      restorePageScrollY(target.scrollY);
+
+      // The virtual grid sizes itself from its measured width, so on a slow
+      // first layout the document can still be too short to reach the old
+      // offset. Give it one more frame before settling for what we got.
+      if (attempt === 0 && window.scrollY < target.scrollY - 2) {
+        frame = requestAnimationFrame(() => settle(attempt + 1));
+        return;
+      }
+
+      // Reopening after the scroll restore lets the sheet's scroll lock capture
+      // the right offset, so the page behind it stays where the user left it.
+      if (target.details.open && target.details.item) detailsOpen = true;
+    }
+
+    frame = requestAnimationFrame(() => settle(0));
+
+    return () => cancelAnimationFrame(frame);
   });
 
   function handleSearchFocus() {
@@ -171,14 +240,14 @@
   >
     {#if !isSearchMode}
       <Dropdown
-        options={[...sortOptions]}
+        options={[...SORT_OPTIONS]}
         bind:value={sortBy}
         triggerIcon={sortIcon}
       />
     {/if}
 
     <TagsSelect
-      options={[...tagOptions]}
+      options={[...TYPE_OPTIONS]}
       bind:selected={includeTypes}
       min={1}
     />
@@ -240,7 +309,12 @@
   </div>
 </div>
 
-<MediaDetailsSheet item={selectedItem} bind:open={detailsOpen} {onPlay} />
+<MediaDetailsSheet
+  item={selectedItem}
+  bind:open={detailsOpen}
+  bind:activeSnapPoint={detailsSnapPoint}
+  {onPlay}
+/>
 
 <style>
   .texture-fade {

@@ -1,13 +1,12 @@
 <script lang="ts">
   import { browser } from "$app/environment";
-  import { goto } from "$app/navigation";
+  import { afterNavigate, goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { page } from "$app/state";
   import { getStream, fastProxiedUrl, type StreamSource, type GetStreamResult } from "$lib/streaming/client";
   import { attachHls } from "$lib/streaming/hls";
   import { fetchMediaDetails, tmdbPosterUrl } from "$lib/tmdb/client";
   import type { MediaDetails, MediaSummary, MediaType } from "$lib/tmdb/types";
-  import Dropdown from "$lib/common/Dropdown.svelte";
   import SubtitleOverlay from "$lib/subtitles/SubtitleOverlay.svelte";
   import { parseSubtitles, type SubtitleCue } from "$lib/subtitles/parser";
   import {
@@ -320,6 +319,22 @@
     season = value;
     episode = 1;
   }
+
+  // Stepping back through history (instead of pushing a fresh /browse entry)
+  // is what lets Browse restore the exact list, sheet and scroll the user left.
+  // Only safe when we know the previous entry is Browse.
+  let cameFromBrowse = $state(false);
+  afterNavigate((navigation) => {
+    cameFromBrowse = navigation.from?.route.id === "/browse";
+  });
+
+  function leaveWatch() {
+    if (cameFromBrowse) {
+      history.back();
+      return;
+    }
+    void goto(resolve("/browse"));
+  }
 </script>
 
 <svelte:head>
@@ -332,7 +347,7 @@
       <button
         type="button"
         class="mb-5 inline-flex items-center rounded-lg p-2 text-app-secondary-label hover:bg-apple-white/10 hover:text-app-label"
-        onclick={() => goto(resolve("/browse"))}
+        onclick={leaveWatch}
         aria-label="Back to browse"
       >
         <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">

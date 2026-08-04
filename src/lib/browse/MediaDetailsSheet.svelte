@@ -1,3 +1,9 @@
+<script module lang="ts">
+  /** Exported so callers can persist and validate a restored sheet height. */
+  export const COMPACT_SNAP_POINT = 0.58;
+  export const EXPANDED_SNAP_POINT = 0.94;
+</script>
+
 <script lang="ts">
   import Drawer from "@harshmandan/svaul";
   import { goto } from "$app/navigation";
@@ -8,14 +14,21 @@
   interface Props {
     item: MediaSummary | null;
     open?: boolean;
+    /** Bindable so the sheet's height can be captured and restored. */
+    activeSnapPoint?: number | string;
     onPlay?: (item: MediaDetails | MediaSummary) => void;
   }
 
-  let { item, open = $bindable(false), onPlay = () => {} }: Props = $props();
-  const compactSnapPoint = 0.58;
-  const expandedSnapPoint = 0.94;
+  const compactSnapPoint = COMPACT_SNAP_POINT;
+  const expandedSnapPoint = EXPANDED_SNAP_POINT;
 
-  let activeSnapPoint = $state<number | string>(compactSnapPoint);
+  let {
+    item,
+    open = $bindable(false),
+    activeSnapPoint = $bindable(compactSnapPoint),
+    onPlay = () => {},
+  }: Props = $props();
+
   let details = $state<MediaDetails | null>(null);
   let loading = $state(false);
   let error = $state<string | null>(null);

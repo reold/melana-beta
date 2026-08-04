@@ -56,3 +56,30 @@ export interface CatalogRequest {
 export function mediaKey(item: Pick<MediaSummary, "id" | "mediaType">): string {
   return `${item.mediaType}:${item.id}`;
 }
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function isNullableNumber(value: unknown): value is number | null {
+  return value === null || typeof value === "number";
+}
+
+/** Structural check for values coming back from storage or other untrusted input. */
+export function isMediaSummary(value: unknown): value is MediaSummary {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Record<string, unknown>;
+
+  return (
+    typeof item.id === "number" &&
+    (item.mediaType === "movie" || item.mediaType === "tv") &&
+    typeof item.title === "string" &&
+    typeof item.overview === "string" &&
+    isNullableString(item.posterPath) &&
+    isNullableString(item.backdropPath) &&
+    isNullableString(item.releaseDate) &&
+    isNullableNumber(item.rating) &&
+    isNullableNumber(item.voteCount) &&
+    isNullableNumber(item.popularity)
+  );
+}

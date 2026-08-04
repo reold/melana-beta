@@ -12,8 +12,24 @@ export interface CatalogFilters {
   sort: BrowseSort;
 }
 
+/** Serialisable view of a loaded catalog, used to restore it without refetching. */
+export interface CatalogSnapshot {
+  filters: CatalogFilters;
+  items: MediaSummary[];
+  nextPage: number;
+  hasMore: boolean;
+}
+
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
+}
+
+function normalizeFilters(filters: CatalogFilters): CatalogFilters {
+  return {
+    query: filters.query.trim(),
+    mediaTypes: [...new Set(filters.mediaTypes)],
+    sort: filters.sort,
+  };
 }
 
 function filtersKey(filters: CatalogFilters): string {
@@ -53,11 +69,7 @@ export class CatalogState {
   #searchTimer: ReturnType<typeof setTimeout> | null = null;
 
   setFilters(filters: CatalogFilters, searchDebounceMs = 300) {
-    const normalized: CatalogFilters = {
-      query: filters.query.trim(),
-      mediaTypes: [...new Set(filters.mediaTypes)],
-      sort: filters.sort,
-    };
+    const normalized = normalizeFilters(filters);
     const nextKey = filtersKey(normalized);
     if (nextKey === this.#filtersKey) return;
 
@@ -129,6 +141,43 @@ export class CatalogState {
     if (!this.#filters) return;
     this.#filtersKey = "";
     this.setFilters(this.#filters, 0);
+  }
+
+  /** Everything needed to rebuild this catalog later, or `null` before a first load. */
+  snapshot(): CatalogSnapshot | null {
+    if (!this.#filters || this.loading) return null;
+    return {
+      filters: this.#filters,
+      // Plain data: the snapshot outlives this instance's reactive graph and
+      // has to survive `JSON.stringify`.
+      items: $state.snapshot(this.items) as MediaSummary[],
+      nextPage: this.#nextPage,
+      hasMore: this.hasMore,
+    };
+  }
+
+  /**
+   * Adopts a previously captured catalog without hitting the network. A
+   * following `setFilters` with the same filters is then a no-op, so a restored
+   * page renders its old results on the first frame and keeps paginating from
+   * where it left off.
+   */
+  hydrate(snapshot: CatalogSnapshot) {
+    this.#cancelCurrentGeneration();
+
+    const normalized = normalizeFilters(snapshot.filters);
+    this.#filters = normalized;
+    this.#filtersKey = filtersKey(normalized);
+    this.#generation += 1;
+    this.#nextPage = Math.max(1, Math.floor(snapshot.nextPage));
+    this.#controller = new AbortController();
+
+    this.items = [...snapshot.items];
+    this.hasMore = snapshot.hasMore;
+    this.loading = false;
+    this.loadingMore = false;
+    this.error = null;
+    this.loadMoreError = null;
   }
 
   destroy() {

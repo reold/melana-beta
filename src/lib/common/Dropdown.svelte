@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { portal } from "./portal";
 
   interface Props {
     options: string[];
@@ -18,14 +19,49 @@
     onChange = () => {},
   }: Props = $props();
 
+  /** Distance between trigger and menu, and the minimum gap to a viewport edge. */
+  const GAP = 8;
+  const EDGE_MARGIN = 8;
+  const MIN_MENU_WIDTH = 160;
+  /** Assumed menu height before it has been rendered and measured. */
+  const ESTIMATED_MENU_HEIGHT = 168;
+
   let open = $state(false);
   let triggerEl = $state<HTMLButtonElement | null>(null);
+  let anchorEl = $state<HTMLElement | null>(null);
+  let menuEl = $state<HTMLElement | null>(null);
   let menuStyle = $state("");
 
+  /**
+   * The menu is portalled to <body> and positioned against the trigger's
+   * viewport rect: the toolbar it lives in is a horizontal scroller, and an
+   * overflow ancestor clips `position: fixed` descendants on iOS Safari, which
+   * made the menu invisible behind the poster grid.
+   */
   function positionMenu() {
     if (!triggerEl) return;
+
     const rect = triggerEl.getBoundingClientRect();
-    menuStyle = `top:${rect.bottom + 8}px;left:${rect.left}px;min-width:${Math.max(rect.width, 160)}px;`;
+    const viewportWidth = document.documentElement.clientWidth;
+    const viewportHeight = window.innerHeight;
+    const width = Math.max(rect.width, MIN_MENU_WIDTH);
+
+    const left = Math.round(
+      Math.min(Math.max(EDGE_MARGIN, rect.left), Math.max(EDGE_MARGIN, viewportWidth - width - EDGE_MARGIN)),
+    );
+    // `scrollHeight` is the full content height even once max-height clamps it,
+    // so the flip decision stays stable while the menu is open.
+    const wanted = menuEl?.scrollHeight || ESTIMATED_MENU_HEIGHT;
+    const spaceBelow = viewportHeight - rect.bottom - GAP - EDGE_MARGIN;
+    const spaceAbove = rect.top - GAP - EDGE_MARGIN;
+    const flipUp = spaceBelow < wanted && spaceAbove > spaceBelow;
+    const maxHeight = Math.max(120, Math.round(flipUp ? spaceAbove : spaceBelow));
+
+    const vertical = flipUp
+      ? `bottom:${Math.round(viewportHeight - rect.top + GAP)}px`
+      : `top:${Math.round(rect.bottom + GAP)}px`;
+
+    menuStyle = `left:${left}px;${vertical};min-width:${Math.round(width)}px;max-height:${maxHeight}px;`;
   }
 
   function toggleOpen() {
@@ -39,33 +75,61 @@
     open = false;
   }
 
-  function closeOnOutside(node: HTMLElement) {
-    function handleClick(event: MouseEvent) {
-      if (!node.contains(event.target as Node)) open = false;
+  function isInside(target: EventTarget | null): boolean {
+    if (!(target instanceof Node)) return false;
+    return Boolean(anchorEl?.contains(target) || menuEl?.contains(target));
+  }
+
+  // Re-run positioning once the menu exists, now that its height is measurable.
+  $effect(() => {
+    if (!open || !menuEl) return;
+    positionMenu();
+  });
+
+  $effect(() => {
+    if (!open) return;
+
+    function handlePointerDown(event: PointerEvent) {
+      if (!isInside(event.target)) open = false;
     }
-    function handleScroll() {
+
+    function handleScroll(event: Event) {
+      // Scrolling the menu itself must not dismiss it.
+      if (isInside(event.target)) return;
       open = false;
     }
 
-    document.addEventListener("click", handleClick, true);
-    document.addEventListener("scroll", handleScroll, true);
-    return {
-      destroy() {
-        document.removeEventListener("click", handleClick, true);
-        document.removeEventListener("scroll", handleScroll, true);
-      },
-    };
-  }
+    function handleKeydown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      open = false;
+      triggerEl?.focus();
+    }
 
-  function handleKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape") open = false;
-  }
+    function handleReposition() {
+      positionMenu();
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("scroll", handleScroll, true);
+    document.addEventListener("keydown", handleKeydown);
+    window.addEventListener("resize", handleReposition);
+    window.addEventListener("orientationchange", handleReposition);
+    window.visualViewport?.addEventListener("resize", handleReposition);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("scroll", handleScroll, true);
+      document.removeEventListener("keydown", handleKeydown);
+      window.removeEventListener("resize", handleReposition);
+      window.removeEventListener("orientationchange", handleReposition);
+      window.visualViewport?.removeEventListener("resize", handleReposition);
+    };
+  });
 </script>
 
 <div
+  bind:this={anchorEl}
   class="relative inline-flex shrink-0 items-center gap-2"
-  use:closeOnOutside
-  onkeydown={handleKeydown}
 >
   {#if label}
     <span class="text-[15px] font-semibold text-app-label">{label}</span>
@@ -97,41 +161,44 @@
       <polyline points="6 9 12 15 18 9" />
     </svg>
   </button>
-
-  {#if open}
-    <ul
-      style={menuStyle}
-      class="fixed z-50 overflow-hidden rounded-[10px] border border-app-separator bg-app-surface shadow-xl"
-      role="listbox"
-    >
-      {#each options as option (option)}
-        <li role="presentation">
-          <button
-            type="button"
-            class="flex w-full items-center justify-between px-4 py-2.5 text-left text-[15px] font-medium text-app-label transition-colors hover:bg-app-surface-hover"
-            class:bg-app-surface-hover={option === value}
-            role="option"
-            aria-selected={option === value}
-            onclick={() => select(option)}
-          >
-            {option}
-            {#if option === value}
-              <svg
-                class="h-4 w-4 shrink-0 text-apple-blue"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="3"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                aria-hidden="true"
-              >
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            {/if}
-          </button>
-        </li>
-      {/each}
-    </ul>
-  {/if}
 </div>
+
+{#if open}
+  <ul
+    bind:this={menuEl}
+    {@attach portal()}
+    style={menuStyle}
+    class="fixed z-[60] overflow-y-auto overscroll-contain rounded-[10px] border border-app-separator bg-app-surface shadow-xl"
+    role="listbox"
+    aria-label={label || "Options"}
+  >
+    {#each options as option (option)}
+      <li role="presentation">
+        <button
+          type="button"
+          class="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-[15px] font-medium text-app-label transition-colors hover:bg-app-surface-hover"
+          class:bg-app-surface-hover={option === value}
+          role="option"
+          aria-selected={option === value}
+          onclick={() => select(option)}
+        >
+          {option}
+          {#if option === value}
+            <svg
+              class="h-4 w-4 shrink-0 text-apple-blue"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="3"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          {/if}
+        </button>
+      </li>
+    {/each}
+  </ul>
+{/if}
