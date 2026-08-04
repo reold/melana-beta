@@ -270,7 +270,7 @@
             {#if details.cast.length}
               <section class="mt-6">
                 <h3 class="text-sm font-bold">Cast</h3>
-                <div class="no-scrollbar mt-3 flex gap-3 overflow-x-auto pb-1">
+                <div class="no-scrollbar -mx-5 mt-3 flex gap-3 overflow-x-auto px-5 pb-1">
                   {#each details.cast as person (person.id)}
                     <div class="w-20 shrink-0">
                       <div
