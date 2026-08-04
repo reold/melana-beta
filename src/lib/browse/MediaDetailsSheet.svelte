@@ -311,8 +311,7 @@
   </div>
   {#snippet footer()}
     <div
-      class="z-20 border-t border-app-separator bg-app-surface px-5 pt-3 shadow-[0_-12px_24px_rgb(0_0_0_/_0.28)]"
-      style="padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);"
+      class="safe-footer z-20 border-t border-app-separator bg-app-surface px-5 pt-3 pb-6 shadow-[0_-12px_24px_rgb(0_0_0_/_0.28)]"
     >
       <button
         type="button"
@@ -340,5 +339,9 @@
   }
   .no-scrollbar::-webkit-scrollbar {
     display: none;
+  }
+
+  .safe-footer {
+    padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
   }
 </style>
