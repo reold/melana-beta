@@ -3,6 +3,7 @@
   import { afterNavigate, goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import ContourTexture from "$lib/assets/contour-texture.png";
+  import { proxyOrigin } from "$lib/streaming/client";
 
   interface CommitInfo {
     sha: string;
@@ -14,6 +15,28 @@
     authorAvatarUrl: string | null;
   }
 
+  interface ProxyStatus {
+    status: string | null;
+    service: string | null;
+    cache: {
+      currentBytes: number;
+      maxBytes: number;
+      utilizationPercent: number;
+      segmentEntries: number;
+      manifestEntries: number;
+    };
+    inflightFetches: number;
+    hostsTracked: number;
+    hostsCoolingDown: number;
+    upstreamRequests: number;
+    upstreamThrottled: number;
+    proxyPool: {
+      total: number;
+      healthy: number;
+      bestLatencyMs: number | null;
+    };
+  }
+
   const REPO = "reold/melana-beta";
   const GITHUB_API = "https://api.github.com";
 
@@ -22,6 +45,10 @@
   let commits = $state<CommitInfo[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
+
+  let proxyStatus = $state<ProxyStatus | null>(null);
+  let proxyLoading = $state(true);
+  let proxyError = $state<string | null>(null);
 
   // Live fetch from the public GitHub API (no token required). Runs only in
   // the browser so the page still renders (with a loading state) during SSR.
@@ -107,6 +134,65 @@
     return () => controller.abort();
   });
 
+  // Status of the melana-rs stream proxy, fetched from its /fetch endpoint.
+  $effect(() => {
+    if (!browser) return;
+    const controller = new AbortController();
+    proxyLoading = true;
+    proxyError = null;
+
+    void (async () => {
+      try {
+        const response = await fetch(`${proxyOrigin}/fetch`, {
+          signal: controller.signal,
+          headers: { Accept: "application/json" },
+        });
+        if (!response.ok) {
+          throw new Error(`Proxy status returned ${response.status}.`);
+        }
+        const raw: any = await response.json();
+
+        const num = (value: any): number =>
+          typeof value === "number" && Number.isFinite(value) ? value : 0;
+
+        proxyStatus = {
+          status: typeof raw.status === "string" ? raw.status : null,
+          service: typeof raw.service === "string" ? raw.service : null,
+          cache: {
+            currentBytes: num(raw.cache?.current_bytes),
+            maxBytes: num(raw.cache?.max_bytes),
+            utilizationPercent: num(raw.cache?.utilization_percent),
+            segmentEntries: num(raw.cache?.segment_entries),
+            manifestEntries: num(raw.cache?.manifest_entries),
+          },
+          inflightFetches: num(raw.inflight_fetches),
+          hostsTracked: num(raw.hosts_tracked),
+          hostsCoolingDown: num(raw.hosts_cooling_down),
+          upstreamRequests: num(raw.upstream_requests),
+          upstreamThrottled: num(raw.upstream_throttled),
+          proxyPool: {
+            total: num(raw.proxy_pool?.total),
+            healthy: num(raw.proxy_pool?.healthy),
+            bestLatencyMs:
+              typeof raw.proxy_pool?.best_latency_ms === "number"
+                ? raw.proxy_pool.best_latency_ms
+                : null,
+          },
+        };
+      } catch (reason) {
+        if (controller.signal.aborted) return;
+        proxyError =
+          reason instanceof Error
+            ? reason.message
+            : "Could not reach the proxy status endpoint.";
+      } finally {
+        if (!controller.signal.aborted) proxyLoading = false;
+      }
+    })();
+
+    return () => controller.abort();
+  });
+
   function shortHash(sha: string): string {
     return sha.slice(0, 7);
   }
@@ -143,6 +229,22 @@
       dateStyle: "medium",
       timeStyle: "short",
     }).format(new Date(iso));
+  }
+
+  function formatBytes(bytes: number): string {
+    if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    const exponent = Math.min(
+      Math.floor(Math.log(bytes) / Math.log(1024)),
+      units.length - 1,
+    );
+    const value = bytes / 1024 ** exponent;
+    return `${value.toFixed(value >= 100 || exponent === 0 ? 0 : 1)} ${units[exponent]}`;
+  }
+
+  /** Clamp cache utilization into 0..100 for the bar width. */
+  function cachePercent(percent: number): number {
+    return Math.min(100, Math.max(0, percent));
   }
 
   function timeAgo(iso: string): string {
@@ -307,32 +409,164 @@
                 </svg>
                 {REPO} · {defaultBranch}
               </a>
-              <a
-                href={repoUrl}
-                target="_blank"
-                rel="noreferrer"
-                class="inline-flex items-center gap-1.5 rounded-md border border-app-separator bg-app-canvas/60 px-2 py-1 text-xs font-semibold text-app-secondary-label transition-colors hover:bg-app-surface-hover hover:text-app-label"
-              >
-                View on GitHub
-                <svg
-                  class="h-3 w-3"
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke-width="2"
-                  stroke="currentColor"
-                  aria-hidden="true"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"
-                  />
-                </svg>
-              </a>
             </div>
           {/if}
 
+        {/if}
+      </section>
+
+      <!-- Server: live status of the melana-rs stream proxy -->
+      <section class="rounded-2xl border border-app-separator bg-app-surface p-4">
+        <div class="flex items-center gap-2 px-1 pb-3">
+          <svg
+            class="h-4 w-4 shrink-0 text-app-secondary-label"
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke-width="1.5"
+            stroke="currentColor"
+            aria-hidden="true"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M5.25 14.25h13.5m-13.5 0a3 3 0 0 1-3-3m3 3a3 3 0 1 0 0 6h13.5a3 3 0 1 0 0-6m-16.5-3a3 3 0 0 1 3-3h13.5a3 3 0 0 1 3 3m-19.5 0a4.5 4.5 0 0 1 .9-2.7L5.737 5.1a3.375 3.375 0 0 1 2.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 0 1 .9 2.7m0 0a3 3 0 0 1-3 3m0 3h.008v.008h-.008v-.008Zm0-6h.008v.008h-.008v-.008Zm-3 6h.008v.008h-.008v-.008Zm0-6h.008v.008h-.008v-.008Z"
+            />
+          </svg>
+          <h2 class="text-lg font-bold">Server</h2>
+        </div>
+
+        {#if proxyLoading}
+          <div
+            class="flex items-center gap-3 px-1 py-6 text-sm text-app-secondary-label"
+            aria-live="polite"
+          >
+            <span
+              class="h-4 w-4 animate-spin rounded-full border-2 border-app-secondary-label border-t-transparent"
+            ></span>
+            Fetching server status…
+          </div>
+        {:else if proxyError}
+          <p class="px-1 py-6 text-sm text-apple-red">{proxyError}</p>
+        {:else if proxyStatus}
+          {@const online = proxyStatus.status === "online"}
+          <div class="rounded-xl border border-app-separator bg-app-canvas/60 p-4">
+            <!-- Status + service -->
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span
+                class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide {online
+                  ? 'bg-apple-green/15 text-apple-green'
+                  : 'bg-apple-red/15 text-apple-red'}"
+              >
+                <span
+                  class="h-1.5 w-1.5 rounded-full {online
+                    ? 'bg-apple-green'
+                    : 'bg-apple-red'}"
+                  aria-hidden="true"
+                ></span>
+                {online ? "Online" : (proxyStatus.status ?? "Offline")}
+              </span>
+              {#if proxyStatus.service}
+                <span class="text-sm font-semibold text-app-label">
+                  {proxyStatus.service}
+                </span>
+              {/if}
+            </div>
+
+            <!-- Cache utilization -->
+            <div class="mt-4">
+              <div class="flex items-baseline justify-between gap-3 text-xs">
+                <span class="font-semibold text-app-label">Cache</span>
+                <span class="tabular-nums text-app-secondary-label">
+                  {proxyStatus.cache.utilizationPercent.toFixed(2)}%
+                </span>
+              </div>
+              <div
+                class="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-app-canvas"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={cachePercent(proxyStatus.cache.utilizationPercent)}
+                aria-label="Cache utilization"
+              >
+                <div
+                  class="h-full rounded-full transition-all duration-500 {online
+                    ? 'bg-apple-aqua'
+                    : 'bg-apple-red'}"
+                  style="width: {cachePercent(proxyStatus.cache.utilizationPercent)}%"
+                ></div>
+              </div>
+              <p class="mt-1.5 text-[11px] tabular-nums text-app-secondary-label">
+                {formatBytes(proxyStatus.cache.currentBytes)}
+                <span aria-hidden="true">/</span>
+                {formatBytes(proxyStatus.cache.maxBytes)}
+                <span aria-hidden="true">·</span>
+                {proxyStatus.cache.segmentEntries} segments
+                <span aria-hidden="true">·</span>
+                {proxyStatus.cache.manifestEntries} manifests
+              </p>
+            </div>
+
+            <!-- Stats grid -->
+            <dl class="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+              <div>
+                <dt class="text-[11px] uppercase tracking-wide text-app-secondary-label">
+                  Upstream requests
+                </dt>
+                <dd class="text-sm font-semibold tabular-nums text-app-label">
+                  {proxyStatus.upstreamRequests}
+                </dd>
+              </div>
+              <div>
+                <dt class="text-[11px] uppercase tracking-wide text-app-secondary-label">
+                  In-flight fetches
+                </dt>
+                <dd class="text-sm font-semibold tabular-nums text-app-label">
+                  {proxyStatus.inflightFetches}
+                </dd>
+              </div>
+              <div>
+                <dt class="text-[11px] uppercase tracking-wide text-app-secondary-label">
+                  Hosts tracked
+                </dt>
+                <dd class="text-sm font-semibold tabular-nums text-app-label">
+                  {proxyStatus.hostsTracked}
+                  {#if proxyStatus.hostsCoolingDown > 0}
+                    <span class="text-xs text-app-secondary-label">
+                      ({proxyStatus.hostsCoolingDown} cooling)
+                    </span>
+                  {/if}
+                </dd>
+              </div>
+              <div>
+                <dt class="text-[11px] uppercase tracking-wide text-app-secondary-label">
+                  Proxy pool
+                </dt>
+                <dd class="text-sm font-semibold tabular-nums text-app-label">
+                  {proxyStatus.proxyPool.healthy}/{proxyStatus.proxyPool.total}
+                  <span class="text-xs text-app-secondary-label">healthy</span>
+                </dd>
+              </div>
+              <div>
+                <dt class="text-[11px] uppercase tracking-wide text-app-secondary-label">
+                  Best latency
+                </dt>
+                <dd class="text-sm font-semibold tabular-nums text-app-label">
+                  {proxyStatus.proxyPool.bestLatencyMs !== null
+                    ? `${proxyStatus.proxyPool.bestLatencyMs} ms`
+                    : "—"}
+                </dd>
+              </div>
+              <div>
+                <dt class="text-[11px] uppercase tracking-wide text-app-secondary-label">
+                  Upstream throttled
+                </dt>
+                <dd class="text-sm font-semibold tabular-nums text-app-label">
+                  {proxyStatus.upstreamThrottled}
+                </dd>
+              </div>
+            </dl>
+          </div>
         {/if}
       </section>
     </div>
