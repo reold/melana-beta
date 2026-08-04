@@ -2,7 +2,9 @@
   import type { Snippet } from "svelte";
   import { portal } from "./portal";
 
-  export type DropdownOption = string | { label: string; value: string };
+  export type DropdownOption =
+    | string
+    | { label: string; value: string; icon?: Snippet };
 
   interface Props {
     options: DropdownOption[];
@@ -23,10 +25,18 @@
   function optionValue(option: DropdownOption): string {
     return typeof option === "string" ? option : option.value;
   }
+  function optionIcon(option: DropdownOption): Snippet | undefined {
+    return typeof option === "string" ? undefined : option.icon;
+  }
 
   const displayLabel = $derived.by(() => {
     const match = options.find((o) => optionValue(o) === value);
     return match ? optionLabel(match) : value;
+  });
+
+  const displayIcon = $derived.by(() => {
+    const match = options.find((o) => optionValue(o) === value);
+    return match ? optionIcon(match) : undefined;
   });
 
   let {
@@ -169,6 +179,9 @@
     {#if triggerIcon}
       {@render triggerIcon()}
     {/if}
+    {#if displayIcon}
+      {@render displayIcon()}
+    {/if}
     <span class="min-w-0 truncate {triggerLabelClass}">{displayLabel}</span>
     <svg
       class="h-3.5 w-3.5 shrink-0 transition-transform duration-200"
@@ -196,6 +209,7 @@
     aria-label={label || "Options"}
   >
     {#each options as option (optionValue(option))}
+      {@const icon = optionIcon(option)}
       <li role="presentation">
         <button
           type="button"
@@ -205,7 +219,12 @@
           aria-selected={optionValue(option) === value}
           onclick={() => select(option)}
         >
-          {optionLabel(option)}
+          <span class="flex min-w-0 items-center gap-1.5">
+            {#if icon}
+              {@render icon()}
+            {/if}
+            <span class="truncate">{optionLabel(option)}</span>
+          </span>
           {#if optionValue(option) === value}
             <svg
               class="h-3.5 w-3.5 shrink-0 text-apple-blue"
