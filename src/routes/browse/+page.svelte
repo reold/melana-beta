@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { disableScrollHandling } from "$app/navigation";
+  import { resolve } from "$app/paths";
   import ContourTexture from "$lib/assets/contour-texture.png";
   import Dropdown from "$lib/common/Dropdown.svelte";
   import TagsSelect from "$lib/common/TagSelect.svelte";
@@ -26,13 +27,15 @@
   import { CatalogState } from "$lib/catalog/catalog-state.svelte";
   import { readPageScrollY, restorePageScrollY } from "$lib/state/scroll";
   import type { MediaSummary } from "$lib/tmdb/types";
+  import type { PageData } from "./$types";
 
   interface Props {
+    data: PageData;
     onSelect?: (item: MediaSummary) => void;
     onPlay?: (item: MediaSummary) => void;
   }
 
-  let { onSelect = () => {}, onPlay = () => {} }: Props = $props();
+  let { data, onSelect = () => {}, onPlay = () => {} }: Props = $props();
 
   const catalog = new CatalogState();
 
@@ -41,6 +44,19 @@
   // results, sheet and scroll — on its first frame instead of flashing
   // defaults and refetching.
   const restored = browseViewState.connect(captureViewState);
+
+  // Build-time SSG prefill (see +page.server.ts): the static page ships with
+  // the default catalog already fetched, so the first paint is instant and no
+  // client fetch is needed until the user changes filters or scrolls further.
+  // A restored history entry wins over the prefill so back-navigation keeps
+  // its exact list.
+  // svelte-ignore state_referenced_locally — `data` is a page prop that never
+  // changes; the prefill only matters on first render.
+  if (restored?.catalog) {
+    catalog.hydrate(restored.catalog);
+  } else if (data.prefill) {
+    catalog.hydrate(data.prefill);
+  }
 
   let sortBy = $state<SortOption>(restored?.sort ?? DEFAULT_SORT);
   let includeTypes = $state<string[]>(restored?.types ?? [...DEFAULT_TYPES]);
@@ -210,7 +226,7 @@
 </script>
 
 <svelte:head>
-  <title>Browse Melana</title>
+  <title>Browse - Melana</title>
 </svelte:head>
 
 {#snippet sortIcon()}
@@ -239,11 +255,33 @@
       style="mask-image: url({ContourTexture});"
     ></div>
     <div class="texture-fade" aria-hidden="true"></div>
-    <h1
-      class="relative z-10 text-5xl font-extrabold leading-none tracking-tight"
-    >
-      Browse
-    </h1>
+    <div class="relative z-10 flex items-center justify-between gap-4">
+      <h1 class="text-5xl font-extrabold leading-none tracking-tight">
+        Browse
+      </h1>
+      <a
+        href={resolve("/settings")}
+        class="inline-flex items-center justify-center rounded-lg p-2 text-app-secondary-label transition-colors hover:bg-apple-white/10 hover:text-app-label"
+        aria-label="Settings"
+        title="Settings"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke-width="1.5"
+          stroke="currentColor"
+          class="size-6"
+          aria-hidden="true"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            d="M4.5 12a7.5 7.5 0 0 0 15 0m-15 0a7.5 7.5 0 1 1 15 0m-15 0H3m16.5 0H21m-1.5 0H12m-8.457 3.077 1.41-.513m14.095-5.13 1.41-.513M5.106 17.785l1.15-.964m11.49-9.642 1.149-.964M7.501 19.795l.75-1.3m7.5-12.99.75-1.3m-6.063 16.658.26-1.477m2.605-14.772.26-1.477m0 17.726-.26-1.477M10.698 4.614l-.26-1.477M16.5 19.794l-.75-1.299M7.5 4.205 12 12m6.894 5.785-1.149-.964M6.256 7.178l-1.15-.964m15.352 8.864-1.41-.513M4.954 9.435l-1.41-.514M12.002 12l-3.75 6.495"
+          />
+        </svg>
+      </a>
+    </div>
   </header>
 
   <div
