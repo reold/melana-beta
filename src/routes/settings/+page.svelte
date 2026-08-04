@@ -39,7 +39,7 @@
             signal: controller.signal,
             headers,
           }),
-          fetch(`${GITHUB_API}/repos/${REPO}/commits?per_page=5`, {
+          fetch(`${GITHUB_API}/repos/${REPO}/commits?per_page=1`, {
             signal: controller.signal,
             headers,
           }),
@@ -205,7 +205,7 @@
         </p>
       </section>
 
-      <!-- Development: latest commit from GitHub -->
+      <!-- Version: latest commit from GitHub -->
       <section class="rounded-2xl border border-app-separator bg-app-surface p-4">
         <div class="flex items-center gap-2 px-1 pb-3">
           <svg
@@ -220,17 +220,10 @@
             <path
               stroke-linecap="round"
               stroke-linejoin="round"
-              d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125"
+              d="M17.25 6.75 22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3-4.5 16.5"
             />
           </svg>
-          <h2 class="text-lg font-bold">Development</h2>
-          {#if !loading && !error}
-            <span
-              class="rounded-full bg-apple-green/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-apple-green"
-            >
-              Live
-            </span>
-          {/if}
+          <h2 class="text-lg font-bold">Version</h2>
         </div>
 
         {#if loading}
@@ -304,16 +297,12 @@
                 <svg
                   class="h-3.5 w-3.5"
                   xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
                   viewBox="0 0 24 24"
-                  stroke-width="1.5"
-                  stroke="currentColor"
+                  fill="currentColor"
                   aria-hidden="true"
                 >
                   <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418"
+                    d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
                   />
                 </svg>
                 {REPO} · {defaultBranch}
@@ -344,35 +333,6 @@
             </div>
           {/if}
 
-          {#if commits.length > 1}
-            <ul class="mt-3 divide-y divide-app-separator border-t border-app-separator">
-              {#each commits.slice(1) as commit (commit.sha)}
-                <li class="flex items-center gap-3 py-2.5">
-                  <a
-                    href={commit.htmlUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    class="shrink-0 font-mono text-xs font-semibold text-apple-blue hover:underline"
-                    title={commit.sha}
-                  >
-                    {shortHash(commit.sha)}
-                  </a>
-                  <span class="min-w-0 flex-1 truncate text-sm text-app-label">
-                    {messageTitle(commit.message)}
-                  </span>
-                  {#if commit.authorDate}
-                    <time
-                      datetime={commit.authorDate}
-                      class="shrink-0 text-xs text-app-secondary-label"
-                      title={formatDateTime(commit.authorDate)}
-                    >
-                      {timeAgo(commit.authorDate)}
-                    </time>
-                  {/if}
-                </li>
-              {/each}
-            </ul>
-          {/if}
         {/if}
       </section>
     </div>
