@@ -198,14 +198,17 @@ interface TmdbTvCast {
   profile_path?: string | null;
 }
 
+function isTmdbTvCast(person: TmdbCast | TmdbTvCast): person is TmdbTvCast {
+  return "roles" in person;
+}
+
 function normalizeCast(cast: TmdbCast[] | TmdbTvCast[]): CastMember[] {
   return cast.slice(0, 18).map((person) => ({
     id: person.id,
     name: person.name,
-    character:
-      "roles" in person
-        ? (person.roles?.[0]?.character ?? "")
-        : (person.character ?? ""),
+    character: isTmdbTvCast(person)
+      ? (person.roles?.[0]?.character ?? "")
+      : (person.character ?? ""),
     profilePath: person.profile_path ?? null,
   }));
 }
