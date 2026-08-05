@@ -193,7 +193,7 @@ function parseStreamSource(payload: any): StreamSource | null {
   }
 
   const tracks = Array.isArray(payload.tracks)
-    ? payload.tracks.flatMap((raw): SubtitleTrack[] => {
+    ? payload.tracks.flatMap((raw: unknown): SubtitleTrack[] => {
         if (!raw || typeof raw !== "object") return [];
         const track = raw as RawTrack;
         if (typeof track.file !== "string" || !track.file) return [];

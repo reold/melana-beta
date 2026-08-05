@@ -9,6 +9,17 @@
 import { proxyOrigin } from "$lib/streaming/client";
 
 const API_BASE = `${proxyOrigin}/opensubtitles`;
+const SUBTITLE_FILE_ENDPOINT = `${API_BASE}/file`;
+const MAX_ERROR_DETAIL_LENGTH = 240;
+
+const JSON_HEADERS = {
+  Accept: "application/json",
+};
+
+const JSON_REQUEST_HEADERS = {
+  ...JSON_HEADERS,
+  "Content-Type": "application/json",
+};
 
 export interface OpenSubtitlesFile {
   id: number;
@@ -28,33 +39,111 @@ export interface OpenSubtitlesResult {
   language: string;
 }
 
-interface RawFileAttribute {
-  file_id?: number;
-  file_name?: string;
-  downloads?: number;
-  sub_format?: string;
+type JsonObject = Record<string, unknown>;
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-interface RawSubtitle {
-  id?: string;
-  type?: string;
-  attributes?: {
-    subtitle_id?: string;
-    release?: string;
-    download_count?: number;
-    language?: string;
-    files?: RawFileAttribute[];
-  };
+function nonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized || null;
 }
 
-const JSON_HEADERS = {
-  Accept: "application/json",
-};
+function stableId(value: unknown): string | null {
+  const text = nonEmptyString(value);
+  if (text) return text;
+  return typeof value === "number" && Number.isSafeInteger(value)
+    ? String(value)
+    : null;
+}
 
-const JSON_REQUEST_HEADERS = {
-  ...JSON_HEADERS,
-  "Content-Type": "application/json",
-};
+function nonNegativeNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : null;
+}
+
+function assertPositiveSafeInteger(value: number, label: string): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new TypeError(`${label} must be a positive safe integer.`);
+  }
+}
+
+function sanitizeErrorDetail(value: unknown): string | null {
+  const detail = nonEmptyString(value);
+  // Do not surface a proxy/upstream HTML response in the player UI.
+  if (!detail || /<[^>]+>/.test(detail)) return null;
+  return detail.slice(0, MAX_ERROR_DETAIL_LENGTH);
+}
+
+async function responseError(
+  operation: string,
+  response: Response,
+): Promise<Error> {
+  let detail: string | null = null;
+
+  if (response.status >= 300 && response.status < 400) {
+    detail = "The subtitle proxy returned a redirect instead of the expected response.";
+  } else if (response.headers.get("content-type")?.toLowerCase().includes("json")) {
+    const payload: unknown = await response.json().catch(() => null);
+    if (isJsonObject(payload)) {
+      detail =
+        sanitizeErrorDetail(payload.message) ??
+        sanitizeErrorDetail(payload.error);
+    }
+  }
+
+  const message = `OpenSubtitles ${operation} failed (${response.status})`;
+  return new Error(detail ? `${message}: ${detail}` : message);
+}
+
+async function readJsonObject(
+  response: Response,
+  operation: string,
+): Promise<JsonObject> {
+  try {
+    const payload: unknown = await response.json();
+    if (!isJsonObject(payload)) throw new Error("Expected a JSON object.");
+    return payload;
+  } catch {
+    throw new Error(`OpenSubtitles ${operation} returned an invalid JSON response.`);
+  }
+}
+
+/**
+ * Keep subtitle file traffic on the configured primary proxy. The backend may
+ * return either an absolute link or the documented relative `/opensubtitles/file`
+ * link; both resolve to the same CORS-safe endpoint.
+ */
+function normalizeProxySubtitleFileUrl(link: unknown): string {
+  const value = nonEmptyString(link);
+  if (!value) {
+    throw new Error("OpenSubtitles download did not return a subtitle file link.");
+  }
+
+  let fileUrl: URL;
+  let expectedEndpoint: URL;
+  try {
+    fileUrl = new URL(value, `${proxyOrigin}/`);
+    expectedEndpoint = new URL(SUBTITLE_FILE_ENDPOINT);
+  } catch {
+    throw new Error("OpenSubtitles download returned an invalid subtitle file link.");
+  }
+
+  if (
+    fileUrl.origin !== expectedEndpoint.origin ||
+    fileUrl.pathname !== expectedEndpoint.pathname ||
+    !fileUrl.searchParams.get("url")
+  ) {
+    throw new Error(
+      "OpenSubtitles download returned a subtitle file link outside the configured proxy.",
+    );
+  }
+
+  return fileUrl.href;
+}
 
 /**
  * Search OpenSubtitles by TMDB id. For TV shows, pass season and episode
@@ -68,9 +157,15 @@ export async function searchSubtitles(
   episode?: number,
   signal?: AbortSignal,
 ): Promise<OpenSubtitlesResult[]> {
+  assertPositiveSafeInteger(tmdbId, "TMDB ID");
+  const requestedLanguage = nonEmptyString(language);
+  if (!requestedLanguage) {
+    throw new TypeError("Subtitle language must be a non-empty string.");
+  }
+
   const params = new URLSearchParams({
     tmdb_id: String(tmdbId),
-    languages: language,
+    languages: requestedLanguage,
     order_by: "download_count",
   });
 
@@ -85,61 +180,64 @@ export async function searchSubtitles(
   });
 
   if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(
-      `OpenSubtitles search failed (${response.status})${text ? `: ${text}` : ""}`,
-    );
+    throw await responseError("search", response);
   }
 
-  const payload = (await response.json()) as {
-    data?: RawSubtitle[];
-    total_pages?: number;
-    total_count?: number;
-  };
-
+  const payload = await readJsonObject(response, "search");
+  const rawSubtitles = Array.isArray(payload.data) ? payload.data : [];
   const results: OpenSubtitlesResult[] = [];
-  for (const raw of payload.data ?? []) {
-    const attrs = raw.attributes;
-    if (!attrs || !attrs.files || attrs.files.length === 0) continue;
 
-    const files: OpenSubtitlesFile[] = attrs.files
-      .filter((f): f is Required<Pick<RawFileAttribute, "file_id">> & RawFileAttribute =>
-        typeof f.file_id === "number",
-      )
-      .map((f) => ({
-        id: f.file_id,
-        fileName: typeof f.file_name === "string" ? f.file_name : "Unknown",
-        downloads: typeof f.downloads === "number" ? f.downloads : 0,
-        language: typeof attrs.language === "string" ? attrs.language : language,
-      }));
+  for (const raw of rawSubtitles) {
+    if (!isJsonObject(raw) || !isJsonObject(raw.attributes)) continue;
+    const attributes = raw.attributes;
+    const rawFiles = Array.isArray(attributes.files) ? attributes.files : [];
+    const files: OpenSubtitlesFile[] = [];
+
+    for (const rawFile of rawFiles) {
+      if (!isJsonObject(rawFile)) continue;
+      const id = rawFile.file_id;
+      if (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0) continue;
+
+      files.push({
+        id,
+        fileName: nonEmptyString(rawFile.file_name) ?? "Unknown",
+        downloads: nonNegativeNumber(rawFile.downloads) ?? 0,
+        language: nonEmptyString(attributes.language) ?? requestedLanguage,
+      });
+    }
 
     if (files.length === 0) continue;
 
+    const id = stableId(attributes.subtitle_id) ?? stableId(raw.id);
+    // A stable id is required to keep the result selector and subtitle tracks
+    // deterministic across reactive updates.
+    if (!id) continue;
+
     results.push({
-      id: attrs.subtitle_id ?? raw.id ?? String(Math.random()),
-      release: typeof attrs.release === "string" ? attrs.release : files[0].fileName,
+      id,
+      release: nonEmptyString(attributes.release) ?? files[0].fileName,
       downloads:
-        typeof attrs.download_count === "number"
-          ? attrs.download_count
-          : files.reduce((sum, f) => sum + f.downloads, 0),
+        nonNegativeNumber(attributes.download_count) ??
+        files.reduce((sum, file) => sum + file.downloads, 0),
       files,
-      language: typeof attrs.language === "string" ? attrs.language : language,
+      language: nonEmptyString(attributes.language) ?? requestedLanguage,
     });
   }
 
-  // Sort by total downloads descending
+  // Sort by total downloads descending.
   results.sort((a, b) => b.downloads - a.downloads);
   return results;
 }
 
 /**
- * Request a temporary download link for a subtitle file. The returned URL
- * is valid for a short window (typically a few minutes).
+ * Request a temporary, proxy-wrapped download link for a subtitle file.
  */
 export async function downloadSubtitle(
   fileId: number,
   signal?: AbortSignal,
 ): Promise<string> {
+  assertPositiveSafeInteger(fileId, "Subtitle file ID");
+
   const response = await fetch(`${API_BASE}/download`, {
     method: "POST",
     headers: JSON_REQUEST_HEADERS,
@@ -148,18 +246,11 @@ export async function downloadSubtitle(
   });
 
   if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(
-      `OpenSubtitles download failed (${response.status})${text ? `: ${text}` : ""}`,
-    );
+    throw await responseError("download", response);
   }
 
-  const payload = (await response.json()) as { link?: string };
-  if (typeof payload.link !== "string" || !payload.link) {
-    throw new Error("OpenSubtitles did not return a download link.");
-  }
-
-  return payload.link;
+  const payload = await readJsonObject(response, "download");
+  return normalizeProxySubtitleFileUrl(payload.link);
 }
 
 /**
@@ -172,7 +263,7 @@ export async function fetchSubtitleText(
   const link = await downloadSubtitle(fileId, signal);
   const response = await fetch(link, { signal });
   if (!response.ok) {
-    throw new Error(`Failed to fetch subtitle file (${response.status}).`);
+    throw await responseError("file download", response);
   }
   return response.text();
 }

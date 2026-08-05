@@ -94,6 +94,15 @@
   let osSelectedResult = $state<OpenSubtitlesResult | null>(null);
   let osTracks = $state<UnifiedTrack[]>([]);
   let osExpanded = $state(false);
+  let osSearchController: AbortController | null = null;
+  let osSearchRequestId = 0;
+
+  function cancelOpenSubtitlesSearch() {
+    osSearchRequestId += 1;
+    osSearchController?.abort();
+    osSearchController = null;
+    osSearching = false;
+  }
 
   const allTracks = $derived.by((): UnifiedTrack[] => {
     return [...vidcoreTracks, ...osTracks];
@@ -184,7 +193,10 @@
         .catch(markAttempted);
     } else if (track.source === "opensubtitles") {
       const fileId = Number(track.src);
-      if (!Number.isFinite(fileId)) return;
+      if (!Number.isSafeInteger(fileId) || fileId <= 0) {
+        markAttempted();
+        return;
+      }
       void fetchSubtitleText(fileId, controller.signal)
         .then((text) => storeCues(text))
         .catch(markAttempted);
@@ -195,6 +207,7 @@
 
   $effect(() => {
     void source;
+    cancelOpenSubtitlesSearch();
     osResults = [];
     osTracks = [];
     osSelectedResult = null;
@@ -202,6 +215,8 @@
     selectedTrackId = null;
     subtitleDelay = 0;
     cuesMap = {};
+
+    return () => cancelOpenSubtitlesSearch();
   });
 
   // -------------------------------------------------------------------------
@@ -440,7 +455,17 @@
   // -------------------------------------------------------------------------
 
   async function searchOpenSubtitles() {
-    if (!mediaType || !validRequest) return;
+    if (!mediaType || !validRequest || osSearching) return;
+
+    const requestMediaType = mediaType;
+    const requestId = idParam;
+    const requestLanguage = osLanguage;
+    const requestSeason = season;
+    const requestEpisode = episode;
+    const controller = new AbortController();
+    const searchRequestId = ++osSearchRequestId;
+
+    osSearchController = controller;
     osSearching = true;
     osError = null;
     osResults = [];
@@ -449,21 +474,29 @@
 
     try {
       const results = await searchSubtitles(
-        idParam,
-        osLanguage,
-        mediaType,
-        mediaType === "tv" ? season : undefined,
-        mediaType === "tv" ? episode : undefined,
+        requestId,
+        requestLanguage,
+        requestMediaType,
+        requestMediaType === "tv" ? requestSeason : undefined,
+        requestMediaType === "tv" ? requestEpisode : undefined,
+        controller.signal,
       );
+
+      if (controller.signal.aborted || searchRequestId !== osSearchRequestId) return;
       osResults = results;
 
       if (results.length > 0) {
         selectOsResult(results[0]);
       }
     } catch (reason: unknown) {
-      osError = reason instanceof Error ? reason.message : "Search failed.";
+      if (!controller.signal.aborted && searchRequestId === osSearchRequestId) {
+        osError = reason instanceof Error ? reason.message : "Search failed.";
+      }
     } finally {
-      osSearching = false;
+      if (searchRequestId === osSearchRequestId) {
+        osSearchController = null;
+        osSearching = false;
+      }
     }
   }
 
@@ -485,7 +518,7 @@
     const langLabel =
       SUBTITLE_LANGUAGES.find((l) => l.code === result.language)?.label ?? result.language;
 
-    osTracks = result.files.map((file, index) => ({
+    osTracks = result.files.map((file) => ({
       id: `os-${result.id}-${file.id}`,
       label: `${langLabel} · ${truncateMiddle(file.fileName, 48)}${result.files.length > 1 ? ` (${file.downloads.toLocaleString()} ↓)` : ""}`,
       source: "opensubtitles" as const,
