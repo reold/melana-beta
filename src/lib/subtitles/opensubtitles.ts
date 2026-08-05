@@ -1,22 +1,14 @@
 /**
- * OpenSubtitles REST API v1 client.
+ * OpenSubtitles REST API client, served through the primary melana-rs proxy.
  *
- * Requires a free API key from <https://www.opensubtitles.com/en/consumers>.
- * Set it as `PUBLIC_OPENSUBTITLES_API_KEY` in your environment.
- *
- * Free-tier limits: 20 downloads/day, 1 search/second. The client is
- * deliberately minimal — no caching, no retry, no auth tokens.
+ * The proxy owns the upstream API key and rewrites temporary download links
+ * through its CORS-safe `/opensubtitles/file` endpoint. Nothing related to an
+ * OpenSubtitles credential is exposed to the browser.
  */
 
-import { env } from "$env/dynamic/public";
+import { proxyOrigin } from "$lib/streaming/client";
 
-const API_BASE = "https://api.opensubtitles.com/api/v1";
-
-const API_KEY = (env as any).PUBLIC_OPENSUBTITLES_API_KEY ?? "";
-
-export function isOpenSubtitlesConfigured(): boolean {
-  return API_KEY.length > 0;
-}
+const API_BASE = `${proxyOrigin}/opensubtitles`;
 
 export interface OpenSubtitlesFile {
   id: number;
@@ -55,14 +47,14 @@ interface RawSubtitle {
   };
 }
 
-function headers(): Record<string, string> {
-  return {
-    "Api-Key": API_KEY,
-    "Content-Type": "application/json",
-    Accept: "application/json",
-    "User-Agent": "Melana v0.1",
-  };
-}
+const JSON_HEADERS = {
+  Accept: "application/json",
+};
+
+const JSON_REQUEST_HEADERS = {
+  ...JSON_HEADERS,
+  "Content-Type": "application/json",
+};
 
 /**
  * Search OpenSubtitles by TMDB id. For TV shows, pass season and episode
@@ -76,10 +68,6 @@ export async function searchSubtitles(
   episode?: number,
   signal?: AbortSignal,
 ): Promise<OpenSubtitlesResult[]> {
-  if (!API_KEY) {
-    throw new Error("OpenSubtitles API key is not configured.");
-  }
-
   const params = new URLSearchParams({
     tmdb_id: String(tmdbId),
     languages: language,
@@ -92,7 +80,7 @@ export async function searchSubtitles(
   }
 
   const response = await fetch(`${API_BASE}/subtitles?${params}`, {
-    headers: headers(),
+    headers: JSON_HEADERS,
     signal,
   });
 
@@ -152,13 +140,9 @@ export async function downloadSubtitle(
   fileId: number,
   signal?: AbortSignal,
 ): Promise<string> {
-  if (!API_KEY) {
-    throw new Error("OpenSubtitles API key is not configured.");
-  }
-
   const response = await fetch(`${API_BASE}/download`, {
     method: "POST",
-    headers: headers(),
+    headers: JSON_REQUEST_HEADERS,
     body: JSON.stringify({ file_id: fileId }),
     signal,
   });
@@ -179,7 +163,7 @@ export async function downloadSubtitle(
 }
 
 /**
- * Fetch a subtitle file from OpenSubtitles and return its text content.
+ * Fetch a subtitle file through the proxy and return its text content.
  */
 export async function fetchSubtitleText(
   fileId: number,
