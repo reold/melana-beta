@@ -5,37 +5,54 @@ import {
   proxiedManifestUrl,
 } from "./client";
 
-export interface HlsAttachment {
-  destroy(): void;
+export interface HlsQuality {
+  /** hls.js level index */
+  id: number;
+  label: string;
+  height: number;
+  bitrate: number;
 }
 
-// ---------------------------------------------------------------------------
-// Public attach API
-// ---------------------------------------------------------------------------
+export type HlsQualitySelection = "auto" | number;
+
+export interface HlsAttachOptions {
+  /**
+   * Start pinned to the lowest advertised rendition. This deliberately avoids
+   * an ABR up-switch while the proxy path is still warming up.
+   */
+  initialQuality?: HlsQualitySelection;
+  onQualitiesChange?: (qualities: HlsQuality[]) => void;
+  onQualityChange?: (quality: HlsQualitySelection) => void;
+  onFatalError?: (message: string) => void;
+}
+
+export interface HlsAttachment {
+  destroy(): void;
+  setQuality(quality: HlsQualitySelection): void;
+}
+
+function qualityLabel(level: any, index: number): string {
+  if (Number.isFinite(level?.height) && level.height > 0) return `${level.height}p`;
+  if (Number.isFinite(level?.width) && level.width > 0) return `${level.width}w`;
+  return `Quality ${index + 1}`;
+}
 
 /**
  * Attach a VidCore HLS playlist to a `<video>` element with cross-browser
- * support.
+ * support. Media URLs are rewritten by the stream service to use the fast
+ * segment proxy.
  *
- * The master playlist is fetched through the stream proxy with
- * `proxy=<fast edge base>`: the server handles the VidFast WAF bypass and
- * rewrites every URL in the manifest – variants, audio playlists, segments,
- * keys, subtitles – to the fast edge proxy automatically. No client-side
- * manifest rewriting is needed, so hls.js runs with its default loader.
- *
- * hls.js is preferred on every browser that exposes MediaSource or Apple's
- * ManagedMediaSource — including Safari on macOS/iPadOS and iPhone/iPad on
- * iOS 17.1+. On legacy WebKit builds where hls.js cannot run, the same
- * server-rewritten playlist is handed straight to the native player, since
- * every URL in it already points at the proxy.
+ * Playback intentionally begins on the lowest level rather than immediately
+ * using hls.js adaptive bitrate (ABR). Slow proxy starts otherwise cause
+ * competing rendition requests and browser-aborted fragments. Users can opt
+ * into Auto from the quality control once playback is stable.
  */
 export function attachHls(
   video: HTMLVideoElement,
   playlistUrl: string,
   noReferrer: boolean,
+  options: HlsAttachOptions = {},
 ): HlsAttachment | null {
-  // If the stream service already handed us a proxied URL, unwrap it first so
-  // we never wrap a proxy URL in the proxy again.
   let upstreamForProxy: string;
   if (isProxiedStreamUrl(playlistUrl)) {
     upstreamForProxy = extractUpstreamUrl(playlistUrl) || playlistUrl;
@@ -44,15 +61,14 @@ export function attachHls(
   }
   const sourceUrl = proxiedManifestUrl(upstreamForProxy, noReferrer);
 
-  // Legacy WebKit builds without MSE/MMS (e.g. iPhone < iOS 17.1): hls.js
-  // cannot run, but the server-rewritten playlist is fully self-contained
-  // (every URL already points at the proxy), so the native player can consume
-  // it directly.
   if (!Hls.isSupported()) {
     if (!video.canPlayType("application/vnd.apple.mpegurl")) return null;
     video.src = sourceUrl;
     video.load();
     return {
+      setQuality() {
+        // Native HLS owns rendition selection; it exposes no portable API.
+      },
       destroy() {
         video.removeAttribute("src");
         video.load();
@@ -61,63 +77,122 @@ export function attachHls(
   }
 
   const hls = new Hls({
-    // Prefer lowest quality on cold start – small segments arrive faster
     startLevel: 0,
     startPosition: 0,
     startFragPrefetch: true,
     maxBufferLength: 12,
-    maxMaxBufferLength: 600,
+    maxMaxBufferLength: 120,
     highBufferWatchdogPeriod: 1.5,
     debug: false,
   });
 
-  hls.attachMedia(video);
-  hls.loadSource(sourceUrl);
-  hls.startLoad(0);
+  let selectedQuality: HlsQualitySelection = options.initialQuality ?? 0;
+  let networkRecoveryAttempts = 0;
+  let mediaRecoveryAttempts = 0;
+  let recoveryTimer: ReturnType<typeof setTimeout> | null = null;
+  let destroyed = false;
 
-  hls.on(Hls.Events.ERROR, (_event: any, data: any) => {
-    if (data.fatal) {
-      switch (data.type) {
-        case Hls.ErrorTypes.NETWORK_ERROR:
-          hls.startLoad();
-          break;
-        case Hls.ErrorTypes.MEDIA_ERROR:
-          hls.recoverMediaError();
-          break;
-        default:
-          break;
-      }
+  const setQuality = (quality: HlsQualitySelection) => {
+    selectedQuality = quality;
+    if (quality === "auto") {
+      // -1 hands level choice back to hls.js ABR.
+      hls.currentLevel = -1;
+      hls.nextLevel = -1;
+      hls.loadLevel = -1;
+    } else if (hls.levels.length > quality) {
+      // Setting all three prevents a pending ABR choice from immediately
+      // replacing the user's manual selection.
+      hls.currentLevel = quality;
+      hls.nextLevel = quality;
+      hls.loadLevel = quality;
+    }
+    options.onQualityChange?.(selectedQuality);
+  };
+
+  hls.on(Hls.Events.MANIFEST_PARSED, () => {
+    const qualities = hls.levels.map((level: any, id: number) => ({
+      id,
+      label: qualityLabel(level, id),
+      height: Number.isFinite(level.height) ? level.height : 0,
+      bitrate: Number.isFinite(level.bitrate) ? level.bitrate : 0,
+    }));
+    options.onQualitiesChange?.(qualities);
+
+    // A stale index is possible after changing servers; safely fall back to
+    // the lowest rendition instead of creating competing level loads.
+    if (typeof selectedQuality === "number" && !hls.levels[selectedQuality]) {
+      selectedQuality = 0;
+    }
+    setQuality(selectedQuality);
+  });
+
+  hls.on(Hls.Events.LEVEL_SWITCHED, (_event: unknown, data: any) => {
+    // Keep the UI truthful when Auto is enabled.
+    if (selectedQuality === "auto" && typeof data?.level === "number") {
+      options.onQualityChange?.("auto");
     }
   });
 
-  let shouldAutoPlay = true;
+  hls.on(Hls.Events.ERROR, (_event: unknown, data: any) => {
+    if (!data.fatal || destroyed || recoveryTimer) return;
 
+    if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+      // Do not call startLoad repeatedly in the error callback. It creates a
+      // request storm against the edge proxy when an upstream fragment stalls.
+      if (networkRecoveryAttempts >= 2) {
+        options.onFatalError?.("The stream connection failed after two retries.");
+        return;
+      }
+      const delay = networkRecoveryAttempts === 0 ? 1_000 : 3_000;
+      networkRecoveryAttempts += 1;
+      hls.stopLoad();
+      recoveryTimer = setTimeout(() => {
+        recoveryTimer = null;
+        if (!destroyed) hls.startLoad();
+      }, delay);
+      return;
+    }
+
+    if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+      if (mediaRecoveryAttempts >= 1) {
+        options.onFatalError?.("This browser cannot decode the selected stream format.");
+        return;
+      }
+      mediaRecoveryAttempts += 1;
+      hls.recoverMediaError();
+      return;
+    }
+
+    options.onFatalError?.("The video stream could not be loaded.");
+  });
+
+  // Keep the previous playback behaviour: begin when the browser has enough
+  // media, but never force playback again after a user pause.
+  let shouldAutoPlay = true;
   const tryPlay = () => {
     if (!shouldAutoPlay || !video.paused) return;
     void video.play().catch(() => {});
   };
-
-  // Stop auto-play attempts once playback starts or user interacts
   const stopAutoPlay = () => {
     shouldAutoPlay = false;
   };
-
   hls.on(Hls.Events.MANIFEST_PARSED, tryPlay);
   hls.on(Hls.Events.LEVEL_LOADED, tryPlay);
-  // Removed FRAG_BUFFERED - it fires continuously and was auto-resuming after pause
-
   const onCanPlay = () => tryPlay();
   video.addEventListener("canplay", onCanPlay, { once: true });
   video.addEventListener("canplaythrough", onCanPlay, { once: true });
   video.addEventListener("play", stopAutoPlay, { once: true });
   video.addEventListener("pause", stopAutoPlay, { once: true });
 
-  if (video.readyState >= 2) {
-    tryPlay();
-  }
+  hls.attachMedia(video);
+  hls.loadSource(sourceUrl);
+  hls.startLoad(0);
 
   return {
+    setQuality,
     destroy() {
+      destroyed = true;
+      if (recoveryTimer) clearTimeout(recoveryTimer);
       video.removeEventListener("canplay", onCanPlay);
       video.removeEventListener("canplaythrough", onCanPlay);
       video.removeEventListener("play", stopAutoPlay);

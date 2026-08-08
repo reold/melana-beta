@@ -4,7 +4,7 @@
   import { resolve } from "$app/paths";
   import { page } from "$app/state";
   import { getStream, fastProxiedUrl, type StreamSource, type GetStreamResult } from "$lib/streaming/client";
-  import { attachHls } from "$lib/streaming/hls";
+  import { attachHls, type HlsAttachment, type HlsQuality, type HlsQualitySelection } from "$lib/streaming/hls";
   import Dropdown, { type DropdownOption } from "$lib/common/Dropdown.svelte";
   import { fetchMediaDetails, tmdbPosterUrl } from "$lib/tmdb/client";
   import type { MediaDetails, MediaSummary, MediaType } from "$lib/tmdb/types";
@@ -42,6 +42,10 @@
   let loading = $state(false);
   let error = $state<string | null>(null);
   let video = $state<HTMLVideoElement | null>(null);
+  let hlsAttachment: HlsAttachment | null = null;
+  let hlsQualities = $state<HlsQuality[]>([]);
+  // Start pinned to the lowest rendition. Auto is available explicitly in the UI.
+  let selectedQuality = $state<HlsQualitySelection>(0);
 
   const seasons = $derived(
     (details?.seasons ?? []).filter((item) => item.seasonNumber > 0),
@@ -132,6 +136,14 @@
       value: String(n),
     })),
   );
+
+  const qualityOptions = $derived.by((): DropdownOption[] => [
+    { label: "Auto", value: "auto" },
+    ...hlsQualities.map((quality) => ({
+      label: quality.label,
+      value: String(quality.id),
+    })),
+  ]);
 
   const subtitleOptions = $derived.by((): DropdownOption[] => [
     { label: "Subtitles off", value: "" },
@@ -444,8 +456,24 @@
     const src = source;
     if (!el || !src) return;
 
-    const attachment = attachHls(el, src.url, src.noReferrer);
+    // A new source has a new rendition list; begin conservatively again.
+    hlsQualities = [];
+    selectedQuality = 0;
+    const attachment = attachHls(el, src.url, src.noReferrer, {
+      initialQuality: 0,
+      onQualitiesChange: (qualities) => {
+        hlsQualities = qualities;
+      },
+      onQualityChange: (quality) => {
+        selectedQuality = quality;
+      },
+      onFatalError: (message) => {
+        error = message;
+      },
+    });
+    hlsAttachment = attachment;
     return () => {
+      if (hlsAttachment === attachment) hlsAttachment = null;
       attachment?.destroy();
     };
   });
@@ -547,6 +575,13 @@
   function formatDelay(seconds: number): string {
     const sign = seconds >= 0 ? "+" : "";
     return `${sign}${seconds.toFixed(2)}s`;
+  }
+
+  function selectQuality(value: string) {
+    const quality: HlsQualitySelection = value === "auto" ? "auto" : Number(value);
+    if (quality !== "auto" && (!Number.isInteger(quality) || quality < 0)) return;
+    selectedQuality = quality;
+    hlsAttachment?.setQuality(quality);
   }
 
   function selectSeason(value: number) {
@@ -676,6 +711,23 @@
                   onChange={(name) => (selectedServerName = name)}
                 />
               </div>
+
+              <!-- Quality: pinned low by default; Auto is an explicit choice. -->
+              {#if hlsQualities.length > 0}
+                <span class="h-5 w-px bg-app-separator" aria-hidden="true"></span>
+                <div class="flex items-center gap-2">
+                  <svg class="h-4 w-4 shrink-0 text-app-secondary-label" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 15.75 9 10.5l3.75 3.75L20.25 6.75" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 6.75h3.75V10.5" />
+                  </svg>
+                  <Dropdown
+                    label="Quality"
+                    options={qualityOptions}
+                    value={selectedQuality === "auto" ? "auto" : String(selectedQuality)}
+                    onChange={selectQuality}
+                  />
+                </div>
+              {/if}
 
               <!-- Season / Episode (TV only) -->
               {#if mediaType === "tv"}
