@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import { disableScrollHandling } from "$app/navigation";
   import { resolve } from "$app/paths";
   import ContourTexture from "$lib/assets/contour-texture.png";
@@ -211,13 +211,31 @@
   function openSearch() {
     searchOpen = true;
     // The input is conditionally rendered, so focus it once the panel mounts.
-    window.setTimeout(() => searchInput?.focus(), 0);
+    // Use tick (a microtask) rather than setTimeout so the call stays inside
+    // the click's user-activation window — required to pop the iOS keyboard.
+    void tick().then(() => {
+      // The user may have closed the panel again before the tick resolved.
+      if (!searchOpen) return;
+      searchInput?.focus();
+    });
   }
 
   function closeSearch() {
-    searchOpen = false;
+    // Blur first, while the input is still mounted, so the on-screen keyboard
+    // dismisses and focus leaves cleanly.
     searchInput?.blur();
+    searchOpen = false;
   }
+
+  // Guarantee focus even if openSearch's tick raced an unmount/re-mount
+  // (e.g. HMR or rapid toggling): whenever the panel is open and an input
+  // exists, ensure it is focused.
+  $effect(() => {
+    const input = searchInput;
+    if (searchOpen && input && document.activeElement !== input) {
+      input.focus();
+    }
+  });
 
   function clearSearch() {
     searchQuery = "";
