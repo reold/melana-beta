@@ -303,7 +303,7 @@
   </header>
 
   <div class="max-w-7xl mx-auto px-5 pb-10">
-    <div class="max-w-4xl space-y-4">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <!-- Server: live status of the melana-rs stream proxy -->
       <section class="rounded-2xl border border-app-separator bg-app-surface p-4">
         <div class="flex items-center gap-2 px-1 pb-3">
