@@ -3,7 +3,14 @@
   import { afterNavigate, goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { page } from "$app/state";
-  import { getStream, fastProxiedUrl, type StreamSource, type GetStreamResult } from "$lib/streaming/client";
+  import {
+    getStream,
+    fastProxiedUrl,
+    isProxiedStreamUrl,
+    extractUpstreamUrl,
+    type Stream,
+    type GetStreamResult,
+  } from "$lib/streaming/client";
   import { attachHls, type HlsAttachment, type HlsQuality, type HlsQualitySelection } from "$lib/streaming/hls";
   import Dropdown, { type DropdownOption } from "$lib/common/Dropdown.svelte";
   import { fetchMediaDetails, tmdbPosterUrl } from "$lib/tmdb/client";
@@ -33,10 +40,10 @@
   let streamResult = $state<GetStreamResult | null>(null);
   let selectedServerName = $state<string>("");
 
-  const source = $derived.by(() => {
+  const source = $derived.by<Stream | null>(() => {
     if (!streamResult || !selectedServerName) return null;
-    const item = streamResult.streams.find((s) => s.server.name === selectedServerName);
-    return item ? item.result : (streamResult.streams[0]?.result ?? null);
+    const item = streamResult.streams.find((s) => s.name === selectedServerName);
+    return item ? item : (streamResult.streams[0] ?? null);
   });
 
   let loading = $state(false);
@@ -96,21 +103,24 @@
 
   // All embedded-caption tracks across every returned server, deduped and
   // keyed by server name so IDs stay stable across reactive updates.
+  // Each track's `origin` is the per-stream origin required by the spadik
+  // fast proxy (RefererOrigin). mp4 and hls streams both carry an origin.
   const vidcoreTracks = $derived.by((): UnifiedTrack[] => {
     const streams = streamResult?.streams ?? [];
     const seen = new Set<string>();
     const tracks: UnifiedTrack[] = [];
     for (const item of streams) {
-      for (const track of item.result.tracks) {
-        const src = fastProxiedUrl(track.file, item.result.noReferrer);
-        const key = `${item.server.name}\u0000${track.label}\u0000${src}`;
+      for (const track of item.tracks) {
+        const src = fastProxiedUrl(track.url, item.origin);
+        const label = track.lang || track.label || "Subtitle";
+        const key = `${item.name}\u0000${label}\u0000${src}`;
         if (seen.has(key)) continue;
         seen.add(key);
         tracks.push({
-          id: `vidcore:${item.server.name}:${tracks.length}`,
-          label: track.label || "Subtitle",
+          id: `vidcore:${item.name}:${tracks.length}`,
+          label,
           source: "vidcore",
-          sourceKey: `vidcore:${item.server.name}`,
+          sourceKey: `vidcore:${item.name}`,
           src,
         });
       }
@@ -123,14 +133,14 @@
   const subtitleSources = $derived.by((): SubtitleSource[] => {
     const serversWithTracks = new Map<string, SubtitleSource>();
     for (const item of streamResult?.streams ?? []) {
-      if (item.result.tracks.length === 0) continue;
-      const key = `vidcore:${item.server.name}`;
+      if (item.tracks.length === 0) continue;
+      const key = `vidcore:${item.name}`;
       if (!serversWithTracks.has(key)) {
         serversWithTracks.set(key, {
           key,
           kind: "vidcore",
-          label: item.server.name,
-          serverName: item.server.name,
+          label: item.name,
+          serverName: item.name,
         });
       }
     }
@@ -210,12 +220,23 @@
 
     if (src.kind === "vidcore" && src.serverName) {
       const serverItem = streamResult?.streams.find(
-        (s) => s.server.name === src.serverName,
+        (s) => s.name === src.serverName,
       );
-      const idx = serverItem?.result.englishTrackIndex;
-      if (idx != null && idx >= 0) {
-        const match = vidcoreTracks.filter((t) => t.sourceKey === key)[idx];
-        if (match) return match;
+      if (serverItem) {
+        // Prefer English track if present (new unified spec has lang, old had englishTrackIndex)
+        const tracksForServer = vidcoreTracks.filter((t) => t.sourceKey === key);
+        const english =
+          tracksForServer.find((trk) =>
+            trk.label.toLowerCase().includes("english"),
+          ) ?? null;
+        if (english) return english;
+        // Legacy: honour englishTrackIndex if present via serverItem (back-compat)
+        const idx = (serverItem as any)?.englishTrackIndex ??
+          (serverItem as any)?.result?.englishTrackIndex;
+        if (typeof idx === "number" && idx >= 0) {
+          const match = tracksForServer[idx];
+          if (match) return match;
+        }
       }
     }
 
@@ -265,9 +286,9 @@
   // pretty names while the underlying state stays a code / id / number).
   const serverOptions = $derived.by((): DropdownOption[] =>
     (streamResult?.streams ?? []).map((s) => ({
-      label: s.server.name,
-      value: s.server.name,
-      icon: s.result.tracks.length > 0 ? captionsIcon : undefined,
+      label: s.name,
+      value: s.name,
+      icon: s.tracks.length > 0 ? captionsIcon : undefined,
     })),
   );
 
@@ -372,13 +393,13 @@
   $effect(() => {
     if (!streamResult || subtitleAutoSelected) return;
     const active = streamResult.streams.find(
-      (s) => s.server.name === selectedServerName,
+      (s) => s.name === selectedServerName,
     );
     let chosen: SubtitleSource | null = null;
-    if (active && active.result.tracks.length > 0) {
+    if (active && active.tracks.length > 0) {
       chosen =
         subtitleSources.find(
-          (s) => s.kind === "vidcore" && s.serverName === active.server.name,
+          (s) => s.kind === "vidcore" && s.serverName === active.name,
         ) ?? null;
     }
     if (!chosen) {
@@ -595,7 +616,7 @@
         if (controller.signal.aborted) return;
         streamResult = result;
         if (result.streams.length > 0) {
-          selectedServerName = result.streams[0].server.name;
+          selectedServerName = result.streams[0].name;
         } else {
           selectedServerName = "";
         }
@@ -620,7 +641,51 @@
     // A new source has a new rendition list; begin conservatively again.
     hlsQualities = [];
     selectedQuality = 0;
-    const attachment = attachHls(el, src.url, src.noReferrer, {
+
+    // mp4 streams are played natively – no hls.js needed.
+    // The file is proxied through the fast edge (spadik) with the per-stream origin.
+    if (src.type === "mp4") {
+      hlsAttachment = null;
+      let upstream = src.url;
+      if (isProxiedStreamUrl(upstream)) {
+        upstream = extractUpstreamUrl(upstream) || upstream;
+      }
+      const proxiedUrl = fastProxiedUrl(upstream, src.origin);
+      el.src = proxiedUrl;
+      el.load();
+
+      let shouldAutoPlay = true;
+      const tryPlay = () => {
+        if (!shouldAutoPlay || !el.paused) return;
+        void el.play().catch(() => {});
+      };
+      const stopAutoPlay = () => {
+        shouldAutoPlay = false;
+      };
+      const onCanPlay = () => tryPlay();
+      el.addEventListener("canplay", onCanPlay, { once: true });
+      el.addEventListener("canplaythrough", onCanPlay, { once: true });
+      el.addEventListener("play", stopAutoPlay, { once: true });
+      el.addEventListener("pause", stopAutoPlay, { once: true });
+      if (el.readyState >= 2) tryPlay();
+
+      return () => {
+        el.removeEventListener("canplay", onCanPlay);
+        el.removeEventListener("canplaythrough", onCanPlay);
+        el.removeEventListener("play", stopAutoPlay);
+        el.removeEventListener("pause", stopAutoPlay);
+        el.removeAttribute("src");
+        el.load();
+      };
+    }
+
+    if (src.type === "dash") {
+      error = "DASH streams are not yet supported in this player. Try another server.";
+      return;
+    }
+
+    // HLS (m3u8) – use hls.js with origin-aware manifest proxy
+    const attachment = attachHls(el, src.url, src.origin, {
       initialQuality: 0,
       onQualitiesChange: (qualities) => {
         hlsQualities = qualities;

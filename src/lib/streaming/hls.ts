@@ -38,19 +38,23 @@ function qualityLabel(level: any, index: number): string {
 }
 
 /**
- * Attach a VidCore HLS playlist to a `<video>` element with cross-browser
- * support. Media URLs are rewritten by the stream service to use the fast
- * segment proxy.
+ * Attach a unified `/sources` HLS playlist to a `<video>` element with
+ * cross-browser support. The per-stream `origin` is forwarded to the
+ * manifest proxy so the upstream receives the correct Referer/Origin header.
+ *
+ * For mp4 streams hls.js is NOT needed – the browser plays the file
+ * natively via `video.src = fastProxiedUrl(url, origin)`. This helper
+ * should only be called for `type === "hls"` streams (see watch page).
  *
  * Playback intentionally begins on the lowest level rather than immediately
- * using hls.js adaptive bitrate (ABR). Slow proxy starts otherwise cause
- * competing rendition requests and browser-aborted fragments. Users can opt
- * into Auto from the quality control once playback is stable.
+ * using hls.js ABR. Slow proxy starts otherwise cause competing rendition
+ * requests and browser-aborted fragments. Users can opt into Auto from the
+ * quality control once playback is stable.
  */
 export function attachHls(
   video: HTMLVideoElement,
   playlistUrl: string,
-  noReferrer: boolean,
+  origin: string | null | undefined,
   options: HlsAttachOptions = {},
 ): HlsAttachment | null {
   let upstreamForProxy: string;
@@ -59,7 +63,15 @@ export function attachHls(
   } else {
     upstreamForProxy = playlistUrl;
   }
-  const sourceUrl = proxiedManifestUrl(upstreamForProxy, noReferrer);
+  // Backward compat: if origin is passed as boolean (legacy noReferrer),
+  // coerce to appropriate string handling – string will be used, true => no
+  // origin, false => VIDCORE_ORIGIN via buildProxyUrl overload.
+  const originParam =
+    typeof origin === "string" ? origin : (origin as unknown as boolean);
+  const sourceUrl = proxiedManifestUrl(
+    upstreamForProxy,
+    originParam as string,
+  );
 
   if (!Hls.isSupported()) {
     if (!video.canPlayType("application/vnd.apple.mpegurl")) return null;
