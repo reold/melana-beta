@@ -19,6 +19,9 @@ export default defineConfig(({ mode }) => {
   const basePath = normalizeBasePath(BASE_PATH);
 
   return {
+    server: {
+      allowedHosts: true,
+    },
     plugins: [
       tailwindcss(),
       sveltekit({

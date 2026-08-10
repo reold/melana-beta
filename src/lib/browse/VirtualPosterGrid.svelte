@@ -27,7 +27,14 @@
     onSelect = () => {},
   }: Props = $props();
 
-  const columns = 2;
+  const columns = $derived.by(() => {
+    if (width === 0) return 2; // SSR / initial
+    if (width >= 1200) return 6;
+    if (width >= 1024) return 5;
+    if (width >= 768) return 4;
+    if (width >= 480) return 3;
+    return 2;
+  });
   const horizontalPadding = 40;
   const columnGap = 16;
   const rowGap = 16;
@@ -39,7 +46,7 @@
   let viewportHeight = $state(0);
 
   const cardWidth = $derived(
-    Math.max(0, (width - horizontalPadding - columnGap) / columns),
+    Math.max(0, (width - horizontalPadding - (columns - 1) * columnGap) / columns),
   );
   // Poster art is 3:4; the Apple-style metadata rail below it is 32px high.
   const rowHeight = $derived(cardWidth * (4 / 3) + 32 + rowGap);
@@ -104,12 +111,12 @@
 
 <section
   bind:this={element}
-  class="relative mt-6 px-5 pb-28"
+  class="relative mt-6 px-5 pb-28 max-w-7xl mx-auto w-full"
   aria-live="polite"
 >
   {#if loading && items.length === 0}
-    <div class="grid grid-cols-2 gap-4" aria-label="Loading titles">
-      {#each Array(6) as _}
+    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4" aria-label="Loading titles">
+      {#each Array(12) as _}
         <div class="animate-pulse overflow-hidden rounded-2xl bg-app-surface">
           <div class="aspect-[3/4] bg-app-surface-hover"></div>
           <div class="h-8"></div>
@@ -137,8 +144,8 @@
     >
       {#each virtualRows as rowIndex (rowIndex)}
         <div
-          class="absolute inset-x-0 grid grid-cols-2 gap-x-4"
-          style={`top: ${rowIndex * rowHeight}px`}
+          class="absolute inset-x-0 grid gap-x-4"
+          style={`top: ${rowIndex * rowHeight}px; grid-template-columns: repeat(${columns}, minmax(0, 1fr));`}
         >
           {#each items.slice(rowIndex * columns, rowIndex * columns + columns) as item (`${item.mediaType}:${item.id}`)}
             <MediaPosterCard {item} {onSelect} />

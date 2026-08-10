@@ -285,7 +285,7 @@
       style="mask-image: url({ContourTexture});"
     ></div>
     <div class="texture-fade" aria-hidden="true"></div>
-    <div class="relative z-10 flex items-center gap-1">
+    <div class="relative z-10 max-w-7xl mx-auto flex items-center gap-1">
       <button
         type="button"
         class="inline-flex items-center rounded-lg p-2 text-app-secondary-label hover:bg-apple-white/10 hover:text-app-label"
@@ -302,8 +302,8 @@
     </div>
   </header>
 
-  <div class="px-4 pb-10 sm:px-8">
-    <div class="mx-auto max-w-6xl space-y-4">
+  <div class="max-w-7xl mx-auto px-5 pb-10">
+    <div class="max-w-4xl space-y-4">
       <!-- Server: live status of the melana-rs stream proxy -->
       <section class="rounded-2xl border border-app-separator bg-app-surface p-4">
         <div class="flex items-center gap-2 px-1 pb-3">

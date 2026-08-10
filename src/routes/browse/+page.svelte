@@ -273,7 +273,7 @@
       style="mask-image: url({ContourTexture});"
     ></div>
     <div class="texture-fade" aria-hidden="true"></div>
-    <div class="relative z-10 flex items-center justify-between gap-4">
+    <div class="relative z-10 max-w-7xl mx-auto flex items-center justify-between gap-4">
       <h1 class="text-5xl font-extrabold leading-none tracking-tight">
         Browse
       </h1>
@@ -303,22 +303,52 @@
   </header>
 
   <div
-    class="no-scrollbar sticky top-0 z-30 flex items-center gap-2.5 overflow-x-auto border-y border-app-separator bg-app-canvas/95 px-4 py-2.5 backdrop-blur-xl"
-    aria-label="Browse filters"
+    class="sticky top-0 z-30 border-y border-app-separator bg-app-canvas/95 backdrop-blur-xl"
   >
-    {#if !isSearchMode}
-      <Dropdown
-        options={[...SORT_OPTIONS]}
-        bind:value={sortBy}
-        triggerIcon={sortIcon}
-      />
-    {/if}
+    <div
+      class="no-scrollbar max-w-7xl mx-auto flex items-center gap-2.5 overflow-x-auto px-5 py-2.5"
+      aria-label="Browse filters"
+    >
+      {#if !isSearchMode}
+        <Dropdown
+          options={[...SORT_OPTIONS]}
+          bind:value={sortBy}
+          triggerIcon={sortIcon}
+        />
+      {/if}
 
-    <TagsSelect
-      options={[...TYPE_OPTIONS]}
-      bind:selected={includeTypes}
-      min={1}
-    />
+      <TagsSelect
+        options={[...TYPE_OPTIONS]}
+        bind:selected={includeTypes}
+        min={1}
+      />
+
+      <!-- Desktop Search Bar -->
+      <div class="hidden md:flex items-center gap-2 ml-auto shrink-0 w-64 rounded-xl border border-apple-gray/35 bg-app-surface/90 px-3 py-1.5 focus-within:border-apple-blue/60 transition-colors">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-4 text-app-secondary-label">
+          <path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clip-rule="evenodd" />
+        </svg>
+        <input
+          bind:value={searchQuery}
+          type="text"
+          placeholder="Search titles..."
+          class="w-full bg-transparent text-sm font-semibold text-app-label placeholder-apple-gray-3 outline-none"
+        />
+        {#if searchQuery}
+          <button
+            type="button"
+            onclick={clearSearch}
+            aria-label="Clear search text"
+            class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-apple-gray/30 text-app-secondary-label hover:bg-apple-gray/45 hover:text-app-label"
+          >
+            <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        {/if}
+      </div>
+    </div>
   </div>
 
   <VirtualPosterGrid
@@ -334,7 +364,7 @@
   />
 
   <div
-    class="fixed inset-x-0 z-40 flex items-center gap-2 px-5 transition-transform duration-150"
+    class="fixed inset-x-0 z-40 flex md:hidden items-center gap-2 px-5 transition-transform duration-150"
     style={`bottom: calc(1.5rem + env(safe-area-inset-bottom)); transform: translateY(-${keyboardInset}px);`}
   >
     {#if searchOpen}
