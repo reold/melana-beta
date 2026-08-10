@@ -882,175 +882,185 @@
           {/if}
         </div>
 
-        <!-- Playback section -->
-        {#if streamResult && streamResult.streams.length > 0}
-          <div class="mt-4 rounded-2xl border border-app-separator bg-app-surface p-4">
-            <div class="flex flex-wrap items-center gap-3">
-              <!-- Server -->
-              <div class="flex items-center gap-2">
+        <!-- Responsive playback & subtitles grid -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
+          <div class="lg:col-span-2">
+            <!-- Playback section -->
+            {#if streamResult && streamResult.streams.length > 0}
+              <div class="rounded-2xl border border-app-separator bg-app-surface p-4 h-full">
+                <div class="flex flex-wrap items-center gap-3">
+                  <!-- Server -->
+                  <div class="flex items-center gap-2">
+                    <svg class="h-4 w-4 shrink-0 text-app-secondary-label" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 0 1-3-3m3 3a3 3 0 1 0 0 6h13.5a3 3 0 1 0 0-6m-16.5-3a3 3 0 0 1 3-3h13.5a3 3 0 0 1 3 3m-19.5 0a4.5 4.5 0 0 1 .9-2.7L5.737 5.1a3.375 3.375 0 0 1 2.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 0 1 .9 2.7m0 0a3 3 0 0 1-3 3m0 3h.008v.008h-.008v-.008Zm0-6h.008v.008h-.008v-.008Zm-3 6h.008v.008h-.008v-.008Zm0-6h.008v.008h-.008v-.008Z" />
+                    </svg>
+                    <Dropdown
+                      options={serverOptions}
+                      value={selectedServerName}
+                      onChange={(name) => (selectedServerName = name)}
+                    />
+                  </div>
+
+                  <!-- Quality: pinned low by default; Auto is an explicit choice. -->
+                  {#if hlsQualities.length > 0}
+                    <span class="h-5 w-px bg-app-separator" aria-hidden="true"></span>
+                    <div class="flex items-center gap-2">
+                      <svg class="h-4 w-4 shrink-0 text-app-secondary-label" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 0 1-1.125-1.125M3.375 19.5h1.5C5.496 19.5 6 18.996 6 18.375m-3.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-1.5A1.125 1.125 0 0 1 18 18.375M20.625 4.5H3.375m17.25 0c.621 0 1.125.504 1.125 1.125M20.625 4.5h-1.5C18.504 4.5 18 5.004 18 5.625m3.75 0v1.5c0 .621-.504 1.125-1.125 1.125M3.375 4.5c-.621 0-1.125.504-1.125 1.125M3.375 4.5h1.5C5.496 4.5 6 5.004 6 5.625m-3.75 0v1.5c0 .621.504 1.125 1.125 1.125m0 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m1.5-3.75C5.496 8.25 6 7.746 6 7.125v-1.5M4.875 8.25C5.496 8.25 6 8.754 6 9.375v1.5m0-5.25v5.25m0-5.25C6 5.004 6.504 4.5 7.125 4.5h9.75c.621 0 1.125.504 1.125 1.125m1.125 2.625h1.5m-1.5 0A1.125 1.125 0 0 1 18 7.125v-1.5m1.125 2.625c-.621 0-1.125.504-1.125 1.125v1.5m2.625-2.625c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125M18 5.625v5.25M7.125 12h9.75m-9.75 0A1.125 1.125 0 0 1 6 10.875M7.125 12C6.504 12 6 12.504 6 13.125m0-2.25C6 11.496 5.496 12 4.875 12M18 10.875c0 .621-.504 1.125-1.125 1.125M18 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125m-12 5.25v-5.25m0 5.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125m-12 0v-1.5c0-.621-.504-1.125-1.125-1.125M18 18.375v-5.25m0 5.25v-1.5c0-.621.504-1.125 1.125-1.125M18 13.125v1.5c0 .621.504 1.125 1.125 1.125M18 13.125c0-.621.504-1.125 1.125-1.125M6 13.125v1.5c0 .621-.504 1.125-1.125 1.125M6 13.125C6 12.504 5.496 12 4.875 12m-1.5 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M19.125 12h1.5m0 0c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h1.5m14.25 0h1.5" />
+                      </svg>
+                      <Dropdown
+                        label="Quality"
+                        options={qualityOptions}
+                        value={selectedQuality === "auto" ? "auto" : String(selectedQuality)}
+                        onChange={selectQuality}
+                      />
+                    </div>
+                  {/if}
+
+                  <!-- Season / Episode (TV only) -->
+                  {#if mediaType === "tv"}
+                    <span class="h-5 w-px bg-app-separator" aria-hidden="true"></span>
+
+                    <Dropdown
+                      options={seasonOptions}
+                      value={String(season)}
+                      onChange={(v) => selectSeason(Number(v))}
+                    />
+
+                    <Dropdown
+                      options={episodeOptions}
+                      value={String(episode)}
+                      onChange={(v) => (episode = Number(v))}
+                    />
+
+                    {#if detailsLoading}
+                      <span class="text-xs text-app-secondary-label">Loading…</span>
+                    {/if}
+                  {/if}
+                </div>
+              </div>
+            {:else}
+              <div class="rounded-2xl border border-app-separator bg-app-surface p-4 flex items-center justify-center h-full text-app-secondary-label">
+                Loading stream servers…
+              </div>
+            {/if}
+          </div>
+
+          <div>
+            <!-- Subtitles section: "From <source> use <file>" -->
+            <div class="rounded-2xl border border-app-separator bg-app-surface p-4 h-full">
+              <div class="flex flex-wrap items-center gap-x-2 gap-y-3">
+                <!-- Subtitles icon -->
                 <svg class="h-4 w-4 shrink-0 text-app-secondary-label" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 0 1-3-3m3 3a3 3 0 1 0 0 6h13.5a3 3 0 1 0 0-6m-16.5-3a3 3 0 0 1 3-3h13.5a3 3 0 0 1 3 3m-19.5 0a4.5 4.5 0 0 1 .9-2.7L5.737 5.1a3.375 3.375 0 0 1 2.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 0 1 .9 2.7m0 0a3 3 0 0 1-3 3m0 3h.008v.008h-.008v-.008Zm0-6h.008v.008h-.008v-.008Zm-3 6h.008v.008h-.008v-.008Zm0-6h.008v.008h-.008v-.008Z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
                 </svg>
+
+                <span class="text-sm font-semibold text-app-secondary-label">From</span>
                 <Dropdown
-                  options={serverOptions}
-                  value={selectedServerName}
-                  onChange={(name) => (selectedServerName = name)}
+                  options={subtitleSourceOptions}
+                  value={selectedSubtitleSourceKey}
+                  onChange={selectSubtitleSource}
+                  triggerLabelClass="max-w-[10rem]"
                 />
+
+                {#if selectedSubtitleSource}
+                  <span class="text-sm font-semibold text-app-secondary-label">use</span>
+                  {#if sourceTracks.length > 0}
+                    <Dropdown
+                      options={subtitleFileOptions}
+                      value={selectedTrackId ?? ""}
+                      onChange={selectSubtitleFile}
+                      triggerLabelClass="max-w-[16rem]"
+                    />
+                  {:else if selectedSubtitleSource.kind === "opensubtitles"}
+                    <span class="text-xs font-semibold text-app-secondary-label">
+                      {osSearching ? "Searching…" : osHasSearched ? "No files" : "Search below"}
+                    </span>
+                  {:else}
+                    <span class="text-xs font-semibold text-app-secondary-label">No files</span>
+                  {/if}
+                {/if}
+
+                <!-- Delay controls (shown when subtitle active) -->
+                {#if selectedTrack}
+                  <span class="h-5 w-px bg-app-separator" aria-hidden="true"></span>
+                  <div class="flex items-center gap-2">
+                    <button
+                      type="button"
+                      class="inline-flex h-7 w-7 items-center justify-center rounded-md border border-app-separator bg-app-surface text-app-secondary-label hover:bg-app-surface-hover hover:text-app-label"
+                      onclick={() => adjustDelay(-0.25)}
+                      aria-label="Subtitles 0.25s earlier"
+                    >
+                      <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      class="min-w-[4rem] rounded-md border border-app-separator bg-app-surface px-2 py-1 text-center text-xs font-semibold tabular-nums text-app-secondary-label hover:text-app-label"
+                      onclick={resetDelay}
+                      title="Click to reset"
+                    >{formatDelay(subtitleDelay)}</button>
+                    <button
+                      type="button"
+                      class="inline-flex h-7 w-7 items-center justify-center rounded-md border border-app-separator bg-app-surface text-app-secondary-label hover:bg-app-surface-hover hover:text-app-label"
+                      onclick={() => adjustDelay(0.25)}
+                      aria-label="Subtitles 0.25s later"
+                    >
+                      <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+                      </svg>
+                    </button>
+                  </div>
+                {/if}
               </div>
 
-              <!-- Quality: pinned low by default; Auto is an explicit choice. -->
-              {#if hlsQualities.length > 0}
-                <span class="h-5 w-px bg-app-separator" aria-hidden="true"></span>
-                <div class="flex items-center gap-2">
-                  <svg class="h-4 w-4 shrink-0 text-app-secondary-label" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 0 1-1.125-1.125M3.375 19.5h1.5C5.496 19.5 6 18.996 6 18.375m-3.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-1.5A1.125 1.125 0 0 1 18 18.375M20.625 4.5H3.375m17.25 0c.621 0 1.125.504 1.125 1.125M20.625 4.5h-1.5C18.504 4.5 18 5.004 18 5.625m3.75 0v1.5c0 .621-.504 1.125-1.125 1.125M3.375 4.5c-.621 0-1.125.504-1.125 1.125M3.375 4.5h1.5C5.496 4.5 6 5.004 6 5.625m-3.75 0v1.5c0 .621.504 1.125 1.125 1.125m0 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m1.5-3.75C5.496 8.25 6 7.746 6 7.125v-1.5M4.875 8.25C5.496 8.25 6 8.754 6 9.375v1.5m0-5.25v5.25m0-5.25C6 5.004 6.504 4.5 7.125 4.5h9.75c.621 0 1.125.504 1.125 1.125m1.125 2.625h1.5m-1.5 0A1.125 1.125 0 0 1 18 7.125v-1.5m1.125 2.625c-.621 0-1.125.504-1.125 1.125v1.5m2.625-2.625c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125M18 5.625v5.25M7.125 12h9.75m-9.75 0A1.125 1.125 0 0 1 6 10.875M7.125 12C6.504 12 6 12.504 6 13.125m0-2.25C6 11.496 5.496 12 4.875 12M18 10.875c0 .621-.504 1.125-1.125 1.125M18 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125m-12 5.25v-5.25m0 5.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125m-12 0v-1.5c0-.621-.504-1.125-1.125-1.125M18 18.375v-5.25m0 5.25v-1.5c0-.621.504-1.125 1.125-1.125M18 13.125v1.5c0 .621.504 1.125 1.125 1.125M18 13.125c0-.621.504-1.125 1.125-1.125M6 13.125v1.5c0 .621-.504 1.125-1.125 1.125M6 13.125C6 12.504 5.496 12 4.875 12m-1.5 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M19.125 12h1.5m0 0c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h1.5m14.25 0h1.5" />
-                  </svg>
-                  <Dropdown
-                    label="Quality"
-                    options={qualityOptions}
-                    value={selectedQuality === "auto" ? "auto" : String(selectedQuality)}
-                    onChange={selectQuality}
-                  />
+              <!-- OpenSubtitles search, only relevant while that source is picked -->
+              {#if selectedSubtitleSource?.kind === "opensubtitles"}
+                <div class="mt-4 space-y-3 border-t border-app-separator pt-3">
+                  <div class="flex flex-wrap items-center gap-3">
+                    <Dropdown
+                      options={languageOptions}
+                      value={osLanguage}
+                      onChange={(code) => (osLanguage = code)}
+                    />
+
+                    <button
+                      type="button"
+                      class="inline-flex items-center gap-2 rounded-[10px] border border-apple-blue/40 bg-apple-blue/15 px-3 py-1 text-sm font-semibold text-apple-blue transition-colors hover:bg-apple-blue/25 disabled:opacity-50"
+                      onclick={searchOpenSubtitles}
+                      disabled={osSearching}
+                    >
+                      {#if osSearching}
+                        <span class="h-4 w-4 animate-spin rounded-full border-2 border-apple-blue border-t-transparent"></span>
+                      {/if}
+                      {osSearching ? "Searching…" : osHasSearched ? "Search again" : "Search"}
+                    </button>
+
+                    {#if osTracks.length > 0}
+                      <span class="rounded-full bg-apple-green/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-apple-green">
+                        {osTracks.length} file{osTracks.length === 1 ? "" : "s"}
+                      </span>
+                    {/if}
+                  </div>
+
+                  {#if osError}
+                    <p class="text-sm text-apple-red">{osError}</p>
+                  {/if}
+
+                  {#if !osHasSearched && !osSearching && !osError}
+                    <p class="text-xs text-app-secondary-label">
+                      Pick a language and press Search to find community subtitles for{" "}
+                      {mediaType === "tv" ? `S${season} E${episode}` : "this title"}.
+                    </p>
+                  {:else if osHasSearched && !osSearching && osTracks.length === 0 && !osError}
+                    <p class="text-xs text-app-secondary-label">No subtitles found for that language.</p>
+                  {/if}
                 </div>
               {/if}
-
-              <!-- Season / Episode (TV only) -->
-              {#if mediaType === "tv"}
-                <span class="h-5 w-px bg-app-separator" aria-hidden="true"></span>
-
-                <Dropdown
-                  options={seasonOptions}
-                  value={String(season)}
-                  onChange={(v) => selectSeason(Number(v))}
-                />
-
-                <Dropdown
-                  options={episodeOptions}
-                  value={String(episode)}
-                  onChange={(v) => (episode = Number(v))}
-                />
-
-                {#if detailsLoading}
-                  <span class="text-xs text-app-secondary-label">Loading…</span>
-                {/if}
-              {/if}
             </div>
           </div>
-        {/if}
-
-        <!-- Subtitles section: "From <source> use <file>" -->
-        <div class="mt-3 rounded-2xl border border-app-separator bg-app-surface p-4">
-          <div class="flex flex-wrap items-center gap-x-2 gap-y-3">
-            <!-- Subtitles icon -->
-            <svg class="h-4 w-4 shrink-0 text-app-secondary-label" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
-            </svg>
-
-            <span class="text-sm font-semibold text-app-secondary-label">From</span>
-            <Dropdown
-              options={subtitleSourceOptions}
-              value={selectedSubtitleSourceKey}
-              onChange={selectSubtitleSource}
-              triggerLabelClass="max-w-[10rem]"
-            />
-
-            {#if selectedSubtitleSource}
-              <span class="text-sm font-semibold text-app-secondary-label">use</span>
-              {#if sourceTracks.length > 0}
-                <Dropdown
-                  options={subtitleFileOptions}
-                  value={selectedTrackId ?? ""}
-                  onChange={selectSubtitleFile}
-                  triggerLabelClass="max-w-[16rem]"
-                />
-              {:else if selectedSubtitleSource.kind === "opensubtitles"}
-                <span class="text-xs font-semibold text-app-secondary-label">
-                  {osSearching ? "Searching…" : osHasSearched ? "No files" : "Search below"}
-                </span>
-              {:else}
-                <span class="text-xs font-semibold text-app-secondary-label">No files</span>
-              {/if}
-            {/if}
-
-            <!-- Delay controls (shown when subtitle active) -->
-            {#if selectedTrack}
-              <span class="h-5 w-px bg-app-separator" aria-hidden="true"></span>
-              <div class="flex items-center gap-2">
-                <button
-                  type="button"
-                  class="inline-flex h-7 w-7 items-center justify-center rounded-md border border-app-separator bg-app-surface text-app-secondary-label hover:bg-app-surface-hover hover:text-app-label"
-                  onclick={() => adjustDelay(-0.25)}
-                  aria-label="Subtitles 0.25s earlier"
-                >
-                  <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  class="min-w-[4rem] rounded-md border border-app-separator bg-app-surface px-2 py-1 text-center text-xs font-semibold tabular-nums text-app-secondary-label hover:text-app-label"
-                  onclick={resetDelay}
-                  title="Click to reset"
-                >{formatDelay(subtitleDelay)}</button>
-                <button
-                  type="button"
-                  class="inline-flex h-7 w-7 items-center justify-center rounded-md border border-app-separator bg-app-surface text-app-secondary-label hover:bg-app-surface-hover hover:text-app-label"
-                  onclick={() => adjustDelay(0.25)}
-                  aria-label="Subtitles 0.25s later"
-                >
-                  <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
-                  </svg>
-                </button>
-              </div>
-            {/if}
-          </div>
-
-          <!-- OpenSubtitles search, only relevant while that source is picked -->
-          {#if selectedSubtitleSource?.kind === "opensubtitles"}
-            <div class="mt-4 space-y-3 border-t border-app-separator pt-3">
-              <div class="flex flex-wrap items-center gap-3">
-                <Dropdown
-                  options={languageOptions}
-                  value={osLanguage}
-                  onChange={(code) => (osLanguage = code)}
-                />
-
-                <button
-                  type="button"
-                  class="inline-flex items-center gap-2 rounded-[10px] border border-apple-blue/40 bg-apple-blue/15 px-3 py-1 text-sm font-semibold text-apple-blue transition-colors hover:bg-apple-blue/25 disabled:opacity-50"
-                  onclick={searchOpenSubtitles}
-                  disabled={osSearching}
-                >
-                  {#if osSearching}
-                    <span class="h-4 w-4 animate-spin rounded-full border-2 border-apple-blue border-t-transparent"></span>
-                  {/if}
-                  {osSearching ? "Searching…" : osHasSearched ? "Search again" : "Search"}
-                </button>
-
-                {#if osTracks.length > 0}
-                  <span class="rounded-full bg-apple-green/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-apple-green">
-                    {osTracks.length} file{osTracks.length === 1 ? "" : "s"}
-                  </span>
-                {/if}
-              </div>
-
-              {#if osError}
-                <p class="text-sm text-apple-red">{osError}</p>
-              {/if}
-
-              {#if !osHasSearched && !osSearching && !osError}
-                <p class="text-xs text-app-secondary-label">
-                  Pick a language and press Search to find community subtitles for{" "}
-                  {mediaType === "tv" ? `S${season} E${episode}` : "this title"}.
-                </p>
-              {:else if osHasSearched && !osSearching && osTracks.length === 0 && !osError}
-                <p class="text-xs text-app-secondary-label">No subtitles found for that language.</p>
-              {/if}
-            </div>
-          {/if}
         </div>
-
       </div>
     </div>
   {/if}
