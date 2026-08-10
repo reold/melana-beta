@@ -434,13 +434,13 @@
         type="button"
         onclick={openSearch}
         aria-label="Open search"
-        class="ml-auto flex size-12 shrink-0 items-center justify-center rounded-full border border-apple-gray/35 bg-app-surface/90 text-app-label shadow-lg backdrop-blur-xl transition-transform active:scale-95"
+        class="ml-auto flex size-14 shrink-0 items-center justify-center rounded-full border border-apple-gray/35 bg-app-surface/90 text-app-label shadow-lg backdrop-blur-xl transition-transform active:scale-95"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
           viewBox="0 0 24 24"
           fill="currentColor"
-          class="size-7"
+          class="size-8"
           aria-hidden="true"
         >
           <path
