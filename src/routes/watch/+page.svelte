@@ -6,7 +6,6 @@
   import {
     getStream,
     fastProxiedUrl,
-    proxiedStreamUrl,
     isProxiedStreamUrl,
     extractUpstreamUrl,
     type Stream,
@@ -645,29 +644,15 @@
 
     // mp4 streams are played natively – no hls.js needed.
     // The file is proxied through the fast edge (spadik) with the per-stream origin.
-    // IMPORTANT: the inner URL *must* be percent-encoded (sign=...&t=... → %26). Our
-    // buildProxyUrl uses URLSearchParams which does this automatically.
-    // The failing example you posted was un-encoded:
-    //   .../proxy?url=https://bcdn...mp4?sign=...&t=...&origin=...
-    // which splits into outer params url=...?sign=... , t=..., origin=...
-    // → upstream loses t, signature invalid → 403/502. Encoded form is:
-    //   .../proxy?url=https%3A%2F%2Fbcdn...mp4%3Fsign%3D...%26t%3D...&origin=...
-    // We also add a fallback: if spadik fails (Empty reply / 5xx), retry via
-    // melana-rs (Render) which is slower but more reliable for large mp4 range requests.
     if (src.type === "mp4") {
       hlsAttachment = null;
       let upstream = src.url;
       if (isProxiedStreamUrl(upstream)) {
         upstream = extractUpstreamUrl(upstream) || upstream;
       }
-      const primaryUrl = fastProxiedUrl(upstream, src.origin);
-      const fallbackUrl = proxiedStreamUrl(upstream, src.origin);
-      let triedFallback = false;
-      const doLoad = (url: string) => {
-        el.src = url;
-        el.load();
-      };
-      doLoad(primaryUrl);
+      const proxiedUrl = fastProxiedUrl(upstream, src.origin);
+      el.src = proxiedUrl;
+      el.load();
 
       let shouldAutoPlay = true;
       const tryPlay = () => {
@@ -678,23 +663,10 @@
         shouldAutoPlay = false;
       };
       const onCanPlay = () => tryPlay();
-      const onError = () => {
-        // spadik often returns Empty reply / 502 for vidlink BunnyCDN mp4s
-        // (Vercel 10s/5MB limits, or Referer mismatch). Fall back once.
-        if (triedFallback) {
-          error = "This mp4 source failed on both proxies (spadik + melana-rs). Try another server or report the url.";
-          return;
-        }
-        triedFallback = true;
-        console.warn("[mp4] spadik failed, retrying via melana-rs", { primaryUrl, fallbackUrl, upstream, origin: src.origin });
-        doLoad(fallbackUrl);
-        void el.play().catch(() => {});
-      };
       el.addEventListener("canplay", onCanPlay, { once: true });
       el.addEventListener("canplaythrough", onCanPlay, { once: true });
       el.addEventListener("play", stopAutoPlay, { once: true });
       el.addEventListener("pause", stopAutoPlay, { once: true });
-      el.addEventListener("error", onError);
       if (el.readyState >= 2) tryPlay();
 
       return () => {
@@ -702,7 +674,6 @@
         el.removeEventListener("canplaythrough", onCanPlay);
         el.removeEventListener("play", stopAutoPlay);
         el.removeEventListener("pause", stopAutoPlay);
-        el.removeEventListener("error", onError);
         el.removeAttribute("src");
         el.load();
       };
